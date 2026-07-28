@@ -41,3 +41,15 @@ htmlcov/
 *.swo
 Thumbs.db
 Desktop.ini
+
+# WPF / .NET build artifacts
+wpf/**/bin/
+wpf/**/obj/
+wpf/**/publish/
+wpf/**/publish_fd/
+
+# WorkBuddy local project memory
+.workbuddy/
+
+# Release packages (distribute via GitHub Releases instead)
+release/

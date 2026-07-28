@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import sys
@@ -6,17 +7,20 @@ from datetime import datetime
 from typing import Optional
 
 
+
 import serial
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QTextCharFormat, QTextCursor, QTextDocument
+from PySide6.QtGui import QColor, QIcon, QPalette, QTextCharFormat, QTextCursor, QTextDocument
 
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -25,11 +29,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+
 
 
 from serial.tools import list_ports
@@ -60,8 +67,46 @@ RECEIVE_LIMIT_OPTIONS = {
     "40MB": 40 * 1024 * 1024,
 }
 
+COMMANDS_STORE_PATH = os.path.join(os.path.expanduser("~"), ".serial_assistant_commands.json")
+DEFAULT_COMMAND_LINES = [
+    "AT^GT_CM=PCBA,ID,CPU",
+    "AT^GT_CM=PCBA,VERSION",
+    "AT^GT_CM=PCBA,SIM",
+    "AT^GT_CM=PCBA,WIFI,ON",
+    "AT^GT_CM=PCBA,RF_BAR",
+    "AT^GT_CM=PCBA,SERVER",
+    "AT^GT_CM=PCBA,MCU,VERSION",
+    "AT^GT_CM=PCBA,TEST",
+    "AT^GT_CM=PCBA,MCU,CHARGE_IC,0",
+    "AT^GT_CM=PCBA,MCU,VOLT",
+    "AT^GT_CM=PCBA,MCU,NTC",
+    "AT^GT_CM=PCBA,BMT",
+    "AT^GT_CM=PCBA,MCU,CHARGE_IC,2",
+    "AT^GT_CM=PCBA,MCU,VOLT",
+    "AT^GT_CM=PCBA,MCU,LIGHT",
+    "AT^GT_CM=PCBA,MCU,KEY",
+    "AT^GT_CM=PCBA,MCU,KEY",
+    "AT^GT_CM=PCBA,MCU,LED,ON",
+    "AT^GT_CM=PCBA,MCU,LED,OFF",
+    "AT^GT_CM=PCBA,BATLED,GREEN",
+    "AT^GT_CM=PCBA,BATLED,YELLOW",
+    "AT^GT_CM=PCBA,BATLED,RED",
+    "AT^GT_CM=PCBA,BATLED,OFF",
+    "AT^GT_CM=PCBA,NETLED,ON",
+    "AT^GT_CM=PCBA,NETLED,OFF",
+    "AT^GT_CM=PCBA,WIFI,SCAN",
+    "AT^GT_CM=PCBA,WIFI,OFF",
+    "AT^GT_CM=PCBA,MCU,MAC",
+    "AT^GT_CM=PCBA,MCU,TEMP",
+    "AT^GT_CM=PCBA,IMSI",
+    "AT^GT_CM=PCBA,CSQ_4G",
+    "AT^GT_CM=PCBA,MCU,SHUTDOWN",
+]
+
 
 def resource_path(relative_path: str) -> str:
+
+
 
     base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
     return os.path.join(base_path, relative_path)
@@ -104,6 +149,118 @@ class SerialReadThread(QThread):
                 break
 
 
+def _set_opaque_background(widget: QWidget, color: str) -> None:
+    """强制 QWidget 不透明填充背景。
+
+    普通 QWidget 叠加 QGraphicsEffect(如投影) 时不会自动填充背景，
+    会整块变透明。这里同时开启 WA_StyledBackground 并用调色板兜底。
+    """
+    widget.setAttribute(Qt.WA_StyledBackground, True)
+    widget.setAutoFillBackground(True)
+    palette = widget.palette()
+    palette.setColor(QPalette.Window, QColor(color))
+    widget.setPalette(palette)
+
+
+class _CommandPanelTitleBar(QWidget):
+    """悬浮命令面板的标题栏，负责拖动与关闭按钮。"""
+
+    def __init__(self, panel: "FloatingCommandPanel") -> None:
+        super().__init__(panel)
+        self._panel = panel
+        self._drag_offset = None
+        self.setFixedHeight(30)
+        self.setObjectName("commandPanelTitleBar")
+        _set_opaque_background(self, "#BF360C")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 0, 4, 0)
+        layout.setSpacing(6)
+
+        self.title_label = QLabel("命令表")
+        self.title_label.setStyleSheet("font-weight:600;")
+
+        self.close_button = QPushButton("✕")
+        self.close_button.setObjectName("commandPanelCloseButton")
+        self.close_button.setFixedSize(22, 22)
+
+        layout.addWidget(self.title_label)
+        layout.addStretch(1)
+        layout.addWidget(self.close_button)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            parent = self._panel.parentWidget()
+            global_top = parent.mapToGlobal(self._panel.pos())
+            self._drag_offset = event.globalPosition().toPoint() - global_top
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and (event.buttons() & Qt.LeftButton):
+            global_pos = event.globalPosition().toPoint()
+            parent = self._panel.parentWidget()
+            local_pos = parent.mapFromGlobal(global_pos - self._drag_offset)
+            self._panel.move(local_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+
+class FloatingCommandPanel(QWidget):
+    """不进入主布局的悬浮命令面板，叠加显示，可拖动、可关闭。"""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("floatingCommandPanel")
+        _set_opaque_background(self, "#FFFFFF")
+        self.setMinimumWidth(360)
+        self.setMinimumHeight(240)
+        self.resize(440, 380)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setSpacing(0)
+
+        self.title_bar = _CommandPanelTitleBar(self)
+        self.body = QWidget()
+        body_layout = QVBoxLayout(self.body)
+        body_layout.setContentsMargins(8, 6, 8, 8)
+        body_layout.setSpacing(6)
+
+        outer.addWidget(self.title_bar)
+        outer.addWidget(self.body, 1)
+
+        self._body_layout = body_layout
+        self.close_button = self.title_bar.close_button
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        shadow.setOffset(0, 4)
+        self.setGraphicsEffect(shadow)
+
+        self.setStyleSheet(
+            "#floatingCommandPanel {"
+            "  background: #FFFFFF; border: 2px solid #E65100; border-radius: 8px;"
+            "}"
+            "#commandPanelTitleBar {"
+            "  background: #BF360C; border-top-left-radius: 6px; border-top-right-radius: 6px;"
+            "}"
+            "#commandPanelTitleBar QLabel { border: none; background: transparent; color: #FFFFFF; font-weight: 700; }"
+            "#commandPanelCloseButton {"
+            "  border: none; background: transparent; font-weight: 700; color: #FFFFFF;"
+            "}"
+            "#commandPanelCloseButton:hover {"
+            "  background: #7F1D1D; color: #FFFFFF; border-radius: 4px;"
+            "}"
+        )
+
+    def body_layout(self) -> QVBoxLayout:
+        return self._body_layout
+
+
 class SerialTab(QWidget):
     status_changed = Signal(str)
 
@@ -116,9 +273,12 @@ class SerialTab(QWidget):
         self.tx_count = 0
         self._displayed_text_bytes = 0
         self._txt_log_write_error_notified = False
+        self._commands_write_error_notified = False
         self._build_ui()
 
         self.refresh_ports()
+        self._load_command_presets()
+
 
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
@@ -200,7 +360,51 @@ class SerialTab(QWidget):
         send_input_layout.addWidget(self.send_input, 1)
         send_input_layout.addWidget(self.send_button)
 
+        self.toggle_command_panel_button = QPushButton("命令表 ▶")
+        self.toggle_command_panel_button.setCheckable(True)
+        self.toggle_command_panel_button.setChecked(False)
+
+        command_top_layout = QHBoxLayout()
+        self.command_name_input = QLineEdit()
+        self.command_name_input.setPlaceholderText("命令名称(可选)")
+        self.command_value_input = QLineEdit()
+        self.command_value_input.setPlaceholderText("命令内容")
+        self.add_command_button = QPushButton("加入命令表")
+        self.import_command_button = QPushButton("导入")
+        self.remove_command_button = QPushButton("删除选中")
+        self.send_command_button = QPushButton("发送选中")
+
+        command_top_layout.addWidget(QLabel("命令表"))
+        command_top_layout.addWidget(self.command_name_input)
+        command_top_layout.addWidget(self.command_value_input, 1)
+        command_top_layout.addWidget(self.add_command_button)
+        command_top_layout.addWidget(self.import_command_button)
+        command_top_layout.addWidget(self.remove_command_button)
+        command_top_layout.addWidget(self.send_command_button)
+
+
+        self.command_table = QTableWidget(0, 2)
+
+        self.command_table.setHorizontalHeaderLabels(["名称", "命令内容"])
+        header = self.command_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        self.command_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.command_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.command_table.setAlternatingRowColors(True)
+
+        self.command_panel = FloatingCommandPanel(self)
+        self.command_panel.body_layout().addLayout(command_top_layout)
+        self.command_panel.body_layout().addWidget(self.command_table, 1)
+        self.command_panel.setVisible(False)
+        self.command_panel.close_button.clicked.connect(
+            lambda: self.toggle_command_panel_button.setChecked(False)
+        )
+        self._command_panel_placed = False
+
         control_top_layout = QHBoxLayout()
+
+
         self.hex_mode_checkbox = QCheckBox("HEX收发")
         self.add_newline_checkbox = QCheckBox("发送附加\\r\\n")
         self.timestamp_checkbox = QCheckBox("显示时间戳")
@@ -254,7 +458,10 @@ class SerialTab(QWidget):
         root_layout.addLayout(search_top_layout)
         root_layout.addLayout(search_bottom_layout)
         root_layout.addLayout(send_input_layout)
+        root_layout.addWidget(self.toggle_command_panel_button)
         root_layout.addLayout(control_top_layout)
+
+
         root_layout.addLayout(control_bottom_layout)
         root_layout.addLayout(log_file_layout)
         root_layout.addWidget(self.stats_label)
@@ -280,14 +487,67 @@ class SerialTab(QWidget):
         self.receive_limit_combo.currentIndexChanged.connect(self._trim_receive_area_to_limit)
         self.select_log_file_button.clicked.connect(self.select_log_file)
         self.log_to_file_checkbox.stateChanged.connect(self._on_log_to_file_changed)
+        self.toggle_command_panel_button.toggled.connect(self._toggle_command_panel)
+        self.add_command_button.clicked.connect(self.add_command_preset)
+        self.import_command_button.clicked.connect(self.import_command_presets)
+        self.remove_command_button.clicked.connect(self.remove_selected_command_preset)
+        self.send_command_button.clicked.connect(self.send_selected_command_preset)
+
+        self._pending_send_row = None
+        self._click_send_timer = QTimer(self)
+        self._click_send_timer.setSingleShot(True)
+        self._click_send_timer.timeout.connect(self._fire_pending_send)
+
+        self.command_table.cellClicked.connect(self._on_command_cell_clicked)
+        self.command_table.cellDoubleClicked.connect(self._on_command_cell_double_clicked)
+        self.command_table.cellChanged.connect(self._on_command_table_cell_changed)
 
 
+
+
+
+    def _toggle_command_panel(self, expanded: bool) -> None:
+        if expanded:
+            if not self._command_panel_placed:
+                self._position_command_panel()
+                self._command_panel_placed = True
+            self.command_panel.setVisible(True)
+            self.command_panel.raise_()
+        else:
+            self.command_panel.setVisible(False)
+        self.toggle_command_panel_button.setText("命令表 ▼" if expanded else "命令表 ▶")
+
+    def _position_command_panel(self) -> None:
+        pw = min(460, max(360, int(self.width() * 0.34)))
+        ph = min(420, max(260, int(self.height() * 0.55)))
+        margin = 12
+        x = max(margin, self.width() - pw - margin)
+        y = max(70, margin + 60)
+        self.command_panel.setGeometry(x, y, pw, ph)
+
+    def _clamp_command_panel(self) -> None:
+        p = self.command_panel
+        if not p.isVisible():
+            return
+        x = max(0, min(p.x(), self.width() - p.width()))
+        y = max(0, min(p.y(), self.height() - p.height()))
+        if x != p.x() or y != p.y():
+            p.move(x, y)
+
+    def resizeEvent(self, event) -> None:
+        if self.command_panel.isVisible() and not self._command_panel_placed:
+            self._position_command_panel()
+            self._command_panel_placed = True
+        self._clamp_command_panel()
+        super().resizeEvent(event)
 
     def _on_loop_send_changed(self, state: int) -> None:
+
         if state == Qt.Checked:
             self.loop_timer.start(self.loop_interval_spin.value())
         else:
             self.loop_timer.stop()
+
 
     def _current_receive_limit_bytes(self) -> int:
         selected = self.receive_limit_combo.currentData()
@@ -359,7 +619,206 @@ class SerialTab(QWidget):
                 self._txt_log_write_error_notified = True
             self.log_to_file_checkbox.setChecked(False)
 
+    def _insert_command_row(self, name: str, content: str) -> None:
+        row = self.command_table.rowCount()
+        self.command_table.insertRow(row)
+
+        name_item = QTableWidgetItem(name)
+        content_item = QTableWidgetItem(content)
+        self.command_table.setItem(row, 0, name_item)
+        self.command_table.setItem(row, 1, content_item)
+
+    def _collect_command_presets(self) -> list[dict]:
+        commands = []
+        for row in range(self.command_table.rowCount()):
+            name_item = self.command_table.item(row, 0)
+            content_item = self.command_table.item(row, 1)
+            content = (content_item.text() if content_item else "").strip()
+            if not content:
+                continue
+            name = (name_item.text() if name_item else "").strip() or f"命令{row + 1}"
+            commands.append({"name": name, "content": content})
+        return commands
+
+    def _save_command_presets(self) -> None:
+        commands = self._collect_command_presets()
+        try:
+            with open(COMMANDS_STORE_PATH, "w", encoding="utf-8") as f:
+                json.dump(commands, f, ensure_ascii=False, indent=2)
+            self._commands_write_error_notified = False
+        except Exception as e:
+            if not self._commands_write_error_notified:
+                QMessageBox.warning(self, "命令表保存失败", str(e))
+                self._commands_write_error_notified = True
+
+    def _normalize_command_lines(self, lines: list[str]) -> list[str]:
+        normalized = []
+        for raw in lines:
+            line = str(raw).strip()
+            if not line:
+                continue
+            if line.startswith("（") and "注意" in line:
+                continue
+            if line.startswith("#"):
+                continue
+            line = re.sub(r"（注意：.*?）", "", line).strip()
+            if line:
+                normalized.append(line)
+        return normalized
+
+    def _load_default_command_presets(self) -> None:
+        defaults = self._normalize_command_lines(DEFAULT_COMMAND_LINES)
+        if not defaults:
+            return
+
+        self.command_table.blockSignals(True)
+        self.command_table.setRowCount(0)
+        for idx, cmd in enumerate(defaults, start=1):
+            self._insert_command_row(f"默认{idx}", cmd)
+        self.command_table.blockSignals(False)
+        self._save_command_presets()
+
+    def _load_command_presets(self) -> None:
+        if not os.path.exists(COMMANDS_STORE_PATH):
+            self._load_default_command_presets()
+            return
+
+        try:
+            with open(COMMANDS_STORE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            self._load_default_command_presets()
+            return
+
+        if not isinstance(data, list):
+            self._load_default_command_presets()
+            return
+
+        self.command_table.blockSignals(True)
+        self.command_table.setRowCount(0)
+        for idx, item in enumerate(data):
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            name = str(item.get("name", "")).strip() or f"命令{idx + 1}"
+            self._insert_command_row(name, content)
+        self.command_table.blockSignals(False)
+
+        if self.command_table.rowCount() == 0:
+            self._load_default_command_presets()
+
+
+    def add_command_preset(self) -> None:
+
+        content = self.command_value_input.text().strip() or self.send_input.text().strip()
+        if not content:
+            QMessageBox.warning(self, "提示", "请输入命令内容")
+            return
+
+        name = self.command_name_input.text().strip() or f"命令{self.command_table.rowCount() + 1}"
+        self._insert_command_row(name, content)
+        self.command_name_input.clear()
+        self.command_value_input.clear()
+        self._save_command_presets()
+
+    def import_command_presets(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入命令",
+            os.path.expanduser("~"),
+            "Command Files (*.txt *.json);;Text Files (*.txt);;JSON Files (*.json)",
+        )
+        if not file_path:
+            return
+
+        lines: list[str] = []
+        try:
+            if file_path.lower().endswith(".json"):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            lines.append(str(item.get("content", "")))
+                        else:
+                            lines.append(str(item))
+            else:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+        except Exception as e:
+            QMessageBox.warning(self, "导入失败", str(e))
+            return
+
+        normalized = self._normalize_command_lines(lines)
+        if not normalized:
+            QMessageBox.information(self, "提示", "未解析到有效命令")
+            return
+
+        self.command_table.blockSignals(True)
+        self.command_table.setRowCount(0)
+        for idx, cmd in enumerate(normalized, start=1):
+            self._insert_command_row(f"导入{idx}", cmd)
+        self.command_table.blockSignals(False)
+        self._save_command_presets()
+        QMessageBox.information(self, "导入完成", f"已导入 {len(normalized)} 条命令")
+
+    def remove_selected_command_preset(self) -> None:
+        row = self.command_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先选中要删除的命令")
+            return
+
+        self.command_table.removeRow(row)
+        self._save_command_presets()
+
+
+    def send_command_preset_by_row(self, row: int) -> None:
+        if row < 0 or row >= self.command_table.rowCount():
+            return
+
+        content_item = self.command_table.item(row, 1)
+        content = (content_item.text() if content_item else "").strip()
+        if not content:
+            return
+
+        self._send_text_payload(content)
+
+    def send_selected_command_preset(self) -> None:
+        row = self.command_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先选中要发送的命令")
+            return
+        self.send_command_preset_by_row(row)
+
+    def _on_command_table_cell_changed(self, _row: int, _column: int) -> None:
+        self._save_command_presets()
+
+    def _on_command_cell_clicked(self, row: int, _col: int) -> None:
+        if row < 0 or row >= self.command_table.rowCount():
+            return
+        self._pending_send_row = row
+        interval = QApplication.doubleClickInterval()
+        self._click_send_timer.start(interval if interval > 0 else 250)
+
+    def _on_command_cell_double_clicked(self, row: int, _col: int) -> None:
+        # 双击时取消单击触发的发送，并进入单元格编辑（双击修改）
+        self._click_send_timer.stop()
+        self._pending_send_row = None
+        item = self.command_table.item(row, self.command_table.currentColumn())
+        if item is not None:
+            self.command_table.editItem(item)
+
+    def _fire_pending_send(self) -> None:
+        row = self._pending_send_row
+        self._pending_send_row = None
+        if row is not None:
+            self.send_command_preset_by_row(row)
+
     def refresh_ports(self) -> None:
+
+
         current = self.port_combo.currentText()
         self.port_combo.clear()
         ports = [p.device for p in list_ports.comports()]
@@ -492,19 +951,18 @@ class SerialTab(QWidget):
         except LookupError:
             return text.encode("gbk", errors="replace")
 
-    def send_data(self) -> None:
-        text = self.send_input.text()
+    def _send_text_payload(self, text: str) -> bool:
         if not text:
-            return
+            return False
 
         if not self.serial_port or not self.serial_port.is_open:
             QMessageBox.warning(self, "提示", "请先打开串口")
-            return
+            return False
 
         try:
             payload = self._parse_send_payload(text)
             if not payload:
-                return
+                return False
 
             sent = self.serial_port.write(payload)
             self.tx_count += sent
@@ -515,10 +973,18 @@ class SerialTab(QWidget):
                 self.append_log(f"[{ts}] TX: {tx_body}")
 
             self.update_stats("已连接")
+            return True
         except ValueError as e:
             QMessageBox.warning(self, "发送参数错误", str(e))
+            return False
         except Exception as e:
             QMessageBox.critical(self, "发送失败", str(e))
+            return False
+
+    def send_data(self) -> None:
+        text = self.send_input.text().strip()
+        self._send_text_payload(text)
+
 
     def find_text(self, forward: bool = True) -> None:
         keyword = self.search_input.text().strip()
@@ -618,20 +1084,31 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
 
         top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(0, 0, 0, 0)
+        top_bar.setSpacing(8)
+
+        self.title_label = QLabel("简约串口助手")
+        self.title_label.setStyleSheet("font-weight: 600;")
+        self.status_label = QLabel("就绪")
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
         self.add_left_button = QPushButton("新增左侧标签")
         self.add_right_button = QPushButton("新增右侧标签")
         self.remove_left_button = QPushButton("关闭左侧当前")
         self.remove_right_button = QPushButton("关闭右侧当前")
         self.global_refresh_button = QPushButton("刷新全部串口")
 
+        top_bar.addWidget(self.title_label)
+        top_bar.addWidget(self.status_label)
+        top_bar.addStretch(1)
         top_bar.addWidget(self.add_left_button)
         top_bar.addWidget(self.add_right_button)
         top_bar.addWidget(self.remove_left_button)
         top_bar.addWidget(self.remove_right_button)
         top_bar.addWidget(self.global_refresh_button)
-        top_bar.addStretch(1)
 
         self.left_tabs = QTabWidget()
+
         self.right_tabs = QTabWidget()
         self.left_tabs.setTabsClosable(False)
         self.right_tabs.setTabsClosable(False)
@@ -643,14 +1120,10 @@ class MainWindow(QMainWindow):
         self.content_layout.addWidget(self.left_tabs, 1)
         self.content_layout.addWidget(self.right_tabs, 1)
 
-        self.status_label = QLabel("就绪")
-        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.status_label.setMaximumHeight(24)
-
         layout.addLayout(top_bar)
         layout.addWidget(self.content_widget, 1)
-        layout.addWidget(self.status_label, 0)
         self.setCentralWidget(central)
+
 
         self.add_left_button.clicked.connect(lambda: self.add_serial_tab("left"))
         self.add_right_button.clicked.connect(lambda: self.add_serial_tab("right"))
