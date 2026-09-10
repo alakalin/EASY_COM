@@ -17,6 +17,7 @@
     7. 程序入口 main()
 """
 
+import ctypes
 import json
 import os
 import re
@@ -26,8 +27,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Optional
 
+try:
+    import ctypes.wintypes
+except ImportError:  # 非 Windows 平台没有 wintypes，边缘缩放会自动跳过
+    pass
+
 import serial
-from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPalette, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
@@ -131,6 +137,12 @@ DEFAULT_COMMAND_LINES = [
 
 # 接收区一次裁剪后保留的比例（留出余量，避免每收一包都触发文档重排）
 TRIM_KEEP_RATIO = 0.8
+
+# 无边框窗口自己实现边缘缩放时用到的 Windows 消息与命中返回值
+WM_NCHITTEST = 0x0084
+HT_LEFT, HT_RIGHT, HT_TOP, HT_BOTTOM = 10, 11, 12, 15
+HT_TOPLEFT, HT_TOPRIGHT, HT_BOTTOMLEFT, HT_BOTTOMRIGHT = 13, 14, 16, 17
+RESIZE_MARGIN = 6
 
 
 def resource_path(relative_path: str) -> str:
@@ -354,11 +366,34 @@ DEFAULT_THEME_KEY = LIGHT_THEME.key
 
 _QSS_TEMPLATE = string.Template("""
 QMainWindow, QDialog, QMessageBox { background-color: $window_bg; }
+/* 无边框窗口没有系统边框，深色壁纸下会糊在背景里，补一圈描边 */
+QMainWindow { border: 1px solid $border; }
+
+/*
+ * 自定义标题栏（无边框窗口）。标签一律不参与鼠标事件，
+ * 这样在文字上按住也能拖动窗口，只有按钮区域会被拦截。
+ */
+#titleBar { background-color: $panel_bg; border-bottom: 1px solid $border; }
+#titleBar QLabel { color: $text_dim; }
+#titleBar #appTitle { font-size: 15px; font-weight: 700; color: $accent; }
 
 QLabel { background: transparent; color: $text; }
 QLabel:disabled { color: $text_disabled; }
 #appTitle { font-size: 15px; font-weight: 700; color: $accent; }
 #statusLabel, #statsLabel { color: $text_dim; }
+
+QPushButton#windowButton, QPushButton#windowCloseButton {
+    background: transparent;
+    border: none;
+    color: $text;
+    font-size: 13px;
+    padding: 0px;
+    border-radius: 3px;
+}
+QPushButton#windowButton:hover { background-color: $button_hover; }
+QPushButton#windowButton:pressed { background-color: $button_pressed; }
+QPushButton#windowCloseButton:hover { background-color: #E81123; color: #FFFFFF; }
+QPushButton#windowCloseButton:pressed { background-color: #B10F1B; color: #FFFFFF; }
 /*
  * 日志记录状态：未记录时低调，记录中用强调色打底，保证一眼能看到。
  * 属性选择器依赖 QSS 的 [state="..."]，改属性后需要 unpolish/polish 才会重算。
@@ -1700,27 +1735,40 @@ class SerialTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# 6. 主窗口
+# 6. 自定义标题栏 + 主窗口
 # ---------------------------------------------------------------------------
 
-class MainWindow(QMainWindow):
-    def __init__(self, theme: Theme = LIGHT_THEME):
-        super().__init__()
-        self._theme = theme
-        self.setWindowTitle("简约串口助手")
-        self.resize(1280, 760)
-        self.setMinimumSize(900, 580)
-        self.tab_count = 0
+class TitleBar(QWidget):
+    """自定义标题栏。
 
-        central = QWidget()
-        layout = QVBoxLayout(central)
+    窗口去掉了系统边框，原来的顶部工具栏整体搬到这一行，
+    同时由它承担窗口拖动、双击最大化，以及最小化/最大化/关闭三个按钮。
+    """
 
-        top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.setSpacing(8)
+    HEIGHT = 40
+
+    def __init__(self, window: "MainWindow", theme: Theme = LIGHT_THEME) -> None:
+        super().__init__(window)
+        self._window = window
+        self.setObjectName("titleBar")
+        self.setFixedHeight(self.HEIGHT)
+        self._drag_offset: Optional[QPoint] = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 6, 0)
+        layout.setSpacing(8)
+
+        self.icon_label = QLabel()
+        icon = QIcon(resource_path(os.path.join("assets", "app.ico")))
+        if icon.isNull():
+            self.icon_label.hide()
+        else:
+            self.icon_label.setPixmap(icon.pixmap(16, 16))
+            self.icon_label.setFixedWidth(18)
 
         self.title_label = QLabel("简约串口助手")
         self.title_label.setObjectName("appTitle")
+
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -1731,22 +1779,116 @@ class MainWindow(QMainWindow):
         self.remove_right_button = QPushButton("关闭右侧当前")
         self.global_refresh_button = QPushButton("刷新全部串口")
 
+        self.theme_label = QLabel("主题")
         self.theme_combo = QComboBox()
         self.theme_combo.setToolTip("切换界面配色")
         for t in THEME_LIST:
             self.theme_combo.addItem(t.label, t.key)
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(theme.key)))
 
-        top_bar.addWidget(self.title_label)
-        top_bar.addWidget(self.status_label)
-        top_bar.addStretch(1)
-        top_bar.addWidget(self.add_left_button)
-        top_bar.addWidget(self.add_right_button)
-        top_bar.addWidget(self.remove_left_button)
-        top_bar.addWidget(self.remove_right_button)
-        top_bar.addWidget(self.global_refresh_button)
-        top_bar.addWidget(QLabel("主题"))
-        top_bar.addWidget(self.theme_combo)
+        self.minimize_button = QPushButton("─")
+        self.maximize_button = QPushButton("□")
+        self.close_button = QPushButton("✕")
+        for btn in (self.minimize_button, self.maximize_button):
+            btn.setObjectName("windowButton")
+            btn.setFixedSize(44, 30)
+            btn.setFocusPolicy(Qt.NoFocus)
+        self.close_button.setObjectName("windowCloseButton")
+        self.close_button.setFixedSize(44, 30)
+        self.close_button.setFocusPolicy(Qt.NoFocus)
+        self.set_maximized(False)
+
+        # 除按钮外的一切都不接收鼠标事件，这样在空白、标题、状态文字上
+        # 按住都能拖动窗口，落在按钮上的点击仍归按钮
+        for w in (self.icon_label, self.title_label, self.status_label, self.theme_label):
+            w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        layout.addWidget(self.icon_label)
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.status_label)
+        layout.addStretch(1)
+        layout.addWidget(self.add_left_button)
+        layout.addWidget(self.add_right_button)
+        layout.addWidget(self.remove_left_button)
+        layout.addWidget(self.remove_right_button)
+        layout.addWidget(self.global_refresh_button)
+        layout.addWidget(self.theme_label)
+        layout.addWidget(self.theme_combo)
+        layout.addSpacing(4)
+        layout.addWidget(self.minimize_button)
+        layout.addWidget(self.maximize_button)
+        layout.addWidget(self.close_button)
+
+        self.minimize_button.clicked.connect(window.showMinimized)
+        self.maximize_button.clicked.connect(window.toggle_maximize)
+        self.close_button.clicked.connect(window.close)
+
+    def set_maximized(self, maximized: bool) -> None:
+        self.maximize_button.setText("❐" if maximized else "□")
+        self.maximize_button.setToolTip("向下还原" if maximized else "最大化")
+
+    # -- 窗口拖动 ---------------------------------------------------------
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = (
+                event.globalPosition().toPoint() - self._window.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag_offset is not None and (event.buttons() & Qt.LeftButton):
+            global_pos = event.globalPosition().toPoint()
+            if self._window.is_custom_maximized():
+                # 最大化状态下拖动：先还原，再让窗口跟着光标走
+                self._window.restore_from_maximize(global_pos.x())
+                self._drag_offset = QPoint(self._window.width() // 2, self.HEIGHT // 2)
+            self._window.move(global_pos - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._window.toggle_maximize()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, theme: Theme = LIGHT_THEME):
+        super().__init__()
+        self._theme = theme
+        self.setWindowTitle("简约串口助手")
+        # 自定义标题栏：去掉系统边框，把工具栏搬进标题栏那一行
+        self.setWindowFlag(Qt.FramelessWindowHint, True)
+        self.resize(1280, 760)
+        self.setMinimumSize(900, 580)
+        self.tab_count = 0
+        self._maximized = False
+        self._normal_geometry: Optional[QRect] = None
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.title_bar = TitleBar(self, theme)
+        # 转发控件引用，下面的信号连接与外部访问路径保持不变
+        self.status_label = self.title_bar.status_label
+        self.theme_combo = self.title_bar.theme_combo
+        self.add_left_button = self.title_bar.add_left_button
+        self.add_right_button = self.title_bar.add_right_button
+        self.remove_left_button = self.title_bar.remove_left_button
+        self.remove_right_button = self.title_bar.remove_right_button
+        self.global_refresh_button = self.title_bar.global_refresh_button
 
         self.left_tabs = QTabWidget()
         self.right_tabs = QTabWidget()
@@ -1755,12 +1897,13 @@ class MainWindow(QMainWindow):
 
         self.content_widget = QWidget()
         self.content_layout = QHBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        # 标题栏占掉了顶部，内容区四周留内边距，否则控件会贴边
+        self.content_layout.setContentsMargins(8, 8, 8, 8)
         self.content_layout.setSpacing(8)
         self.content_layout.addWidget(self.left_tabs, 1)
         self.content_layout.addWidget(self.right_tabs, 1)
 
-        layout.addLayout(top_bar)
+        layout.addWidget(self.title_bar)
         layout.addWidget(self.content_widget, 1)
         self.setCentralWidget(central)
 
@@ -1772,6 +1915,91 @@ class MainWindow(QMainWindow):
         self.theme_combo.currentIndexChanged.connect(self._on_theme_selected)
 
         self.add_serial_tab("left")
+
+    # -- 窗口控制（无边框窗口需要自己实现）--------------------------------
+
+    def is_custom_maximized(self) -> bool:
+        return self._maximized
+
+    def toggle_maximize(self) -> None:
+        if self._maximized:
+            self.restore_from_maximize()
+            return
+
+        self._normal_geometry = self.geometry()
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            # 用 availableGeometry 而不是 showMaximized()：无边框窗口直接最大化
+            # 会把任务栏一起盖住
+            self.setGeometry(screen.availableGeometry())
+        self._maximized = True
+        self.title_bar.set_maximized(True)
+
+    def restore_from_maximize(self, follow_global_x: Optional[int] = None) -> None:
+        """还原窗口。
+
+        follow_global_x 用于"最大化状态下拖动标题栏"：还原的同时让窗口
+        水平方向跟着光标走，符合 Windows 的操作直觉。
+        """
+        geo = self._normal_geometry if self._normal_geometry is not None else QRect(80, 80, 1280, 760)
+        if follow_global_x is not None:
+            geo.moveLeft(follow_global_x - geo.width() // 2)
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                area = screen.availableGeometry()
+                geo.moveLeft(max(area.left(), min(geo.left(), area.right() - geo.width())))
+        self.setGeometry(geo)
+        self._maximized = False
+        self.title_bar.set_maximized(False)
+
+    def nativeEvent(self, eventType, message):
+        """让无边框窗口恢复边缘拖拽缩放。
+
+        FramelessWindowHint 的窗口在 Windows 上不再响应边缘缩放。这里拦截
+        WM_NCHITTEST，把落在边缘若干像素内的命中结果换成对应缩放方向，
+        其余位置原样交回 Qt，因此不会影响内部控件的正常点击。
+        """
+        if sys.platform == "win32" and not self._maximized:
+            try:
+                if bytes(eventType) == b"windows_generic_MSG":
+                    msg = ctypes.wintypes.MSG.from_address(int(message))
+                    if msg.message == WM_NCHITTEST:
+                        hit = self._hit_test_resize(msg.lParam)
+                        if hit is not None:
+                            return True, hit
+            except Exception:
+                # 解析不了就退回默认行为，绝不能因为这个让窗口不可用
+                pass
+        return super().nativeEvent(eventType, message)
+
+    def _hit_test_resize(self, l_param: int) -> Optional[int]:
+        x = ctypes.c_short(l_param & 0xFFFF).value
+        y = ctypes.c_short((l_param >> 16) & 0xFFFF).value
+        pos = self.mapFromGlobal(QPoint(x, y))
+
+        m = RESIZE_MARGIN
+        on_left = pos.x() < m
+        on_right = pos.x() > self.width() - m
+        on_top = pos.y() < m
+        on_bottom = pos.y() > self.height() - m
+
+        if on_top and on_left:
+            return HT_TOPLEFT
+        if on_top and on_right:
+            return HT_TOPRIGHT
+        if on_bottom and on_left:
+            return HT_BOTTOMLEFT
+        if on_bottom and on_right:
+            return HT_BOTTOMRIGHT
+        if on_left:
+            return HT_LEFT
+        if on_right:
+            return HT_RIGHT
+        if on_top:
+            return HT_TOP
+        if on_bottom:
+            return HT_BOTTOM
+        return None
 
     # -- 主题 -------------------------------------------------------------
 
