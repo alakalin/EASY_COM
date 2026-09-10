@@ -233,7 +233,8 @@ class Theme:
     is_dark: bool
 
     window_bg: str          # 主窗口底色
-    panel_bg: str           # 标签页面板底色
+    panel_bg: str           # 标题栏 / 悬浮命令面板底色
+    page_bg: str            # 标签页内容区底色（按钮、输入框之外的留白）
     textarea_bg: str        # 接收区底色
     input_bg: str           # 输入类控件底色
     input_bg_disabled: str
@@ -288,6 +289,7 @@ LIGHT_THEME = Theme(
     is_dark=False,
     window_bg="#f9f9f9",            # gray-2
     panel_bg="#ffffff",
+    page_bg="#ffffff",
     textarea_bg="#ffffff",
     input_bg="#ffffff",
     input_bg_disabled="#f0f0f0",    # gray-3
@@ -331,6 +333,7 @@ DARK_THEME = Theme(
     is_dark=True,
     window_bg="#111111",            # gray-1 (dark)
     panel_bg="#191919",             # gray-2
+    page_bg="#191919",              # gray-2
     textarea_bg="#111111",          # gray-1，接收区做成最暗的"画布"
     input_bg="#222222",             # gray-3
     input_bg_disabled="#191919",    # gray-2
@@ -376,6 +379,7 @@ GREEN_THEME = Theme(
     is_dark=False,
     window_bg="#f8faf8",            # olive-2
     panel_bg="#ffffff",
+    page_bg="#f4fbf6",              # green-2，内容区留白也带绿，整页统一绿调
     textarea_bg="#e6f6eb",          # green-3，接收区用明显的淡绿底，和浅色主题拉开
     input_bg="#ffffff",
     input_bg_disabled="#eff1ef",    # olive-3
@@ -506,7 +510,7 @@ QCheckBox::indicator:checked { background-color: $accent; border-color: $accent_
 QCheckBox::indicator:checked:hover { background-color: $accent_hover; }
 QCheckBox::indicator:disabled { background-color: $input_bg_disabled; border-color: $border; }
 
-QTabWidget::pane { border: 1px solid $border; background-color: $panel_bg; border-radius: 4px; top: -1px; }
+QTabWidget::pane { border: 1px solid $border; background-color: $page_bg; border-radius: 4px; top: -1px; }
 QTabBar::tab {
     background-color: $tab_bg;
     color: $text_dim;
