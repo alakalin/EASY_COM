@@ -12,7 +12,7 @@ env/
 build/
 dist/
 *.spec
-!SerialAssistant.spec
+!SerialAssistant*.spec
 
 *.manifest
 *.exe
