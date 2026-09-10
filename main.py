@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Optional
 
 import serial
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPalette, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QApplication,
@@ -359,6 +359,12 @@ QLabel { background: transparent; color: $text; }
 QLabel:disabled { color: $text_disabled; }
 #appTitle { font-size: 15px; font-weight: 700; color: $accent; }
 #statusLabel, #statsLabel { color: $text_dim; }
+/*
+ * 日志记录状态：未记录时低调，记录中用强调色打底，保证一眼能看到。
+ * 属性选择器依赖 QSS 的 [state="..."]，改属性后需要 unpolish/polish 才会重算。
+ */
+#logStatusLabel { color: $text_disabled; padding: 1px 8px; border-radius: 3px; }
+#logStatusLabel[state="active"] { color: $accent; background-color: $accent_soft_bg; font-weight: 700; }
 
 QPushButton {
     background-color: $button_bg;
@@ -590,6 +596,7 @@ class _CommandPanelTitleBar(QWidget):
             parent = self._panel.parentWidget()
             global_top = parent.mapToGlobal(self._panel.pos())
             self._drag_offset = event.globalPosition().toPoint() - global_top
+            self._panel.raise_()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -597,12 +604,24 @@ class _CommandPanelTitleBar(QWidget):
             global_pos = event.globalPosition().toPoint()
             parent = self._panel.parentWidget()
             local_pos = parent.mapFromGlobal(global_pos - self._drag_offset)
-            self._panel.move(local_pos)
+            # 必须逐帧夹回父控件内部：面板被拖出所属标签页后，
+            # 超出的部分会被相邻标签页盖住，标题栏抓不到就等于"拖进去出不来"
+            self._panel.move(self._panel.clamp_position(local_pos))
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         self._drag_offset = None
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        """双击标题栏复位到默认位置，作为拖丢之后的兜底逃生口。"""
+        if event.button() == Qt.LeftButton:
+            self._drag_offset = None
+            self._panel.apply_default_geometry()
+            self._panel.raise_()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class FloatingCommandPanel(QWidget):
@@ -643,6 +662,39 @@ class FloatingCommandPanel(QWidget):
 
     def body_layout(self) -> QVBoxLayout:
         return self._body_layout
+
+    # -- 定位 -------------------------------------------------------------
+
+    def clamp_position(self, pos: QPoint) -> QPoint:
+        """把面板位置夹在父控件内部。
+
+        面板是 SerialTab 的浮动子控件，一旦被拖到所属标签页之外，超出部分
+        会被相邻标签页盖住，标题栏抓不到就再也拖不回来。所有移动路径都要过这里。
+        """
+        parent = self.parentWidget()
+        if parent is None:
+            return pos
+        max_x = max(0, parent.width() - self.width())
+        max_y = max(0, parent.height() - self.height())
+        return QPoint(min(max(0, pos.x()), max_x), min(max(0, pos.y()), max_y))
+
+    def apply_default_geometry(self) -> None:
+        """按父控件尺寸重算默认悬浮位置与大小，用于首次展开和双击复位。"""
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        pw = min(460, max(360, int(parent.width() * 0.34)))
+        ph = min(420, max(260, int(parent.height() * 0.55)))
+        margin = 12
+        x = max(margin, parent.width() - pw - margin)
+        y = 70
+        self.setGeometry(x, y, pw, ph)
+        self.move(self.clamp_position(QPoint(x, y)))
+
+    def clamp_into_parent(self) -> None:
+        """尺寸或父控件变化后重新夹回可见区域。"""
+        if self.isVisible():
+            self.move(self.clamp_position(self.pos()))
 
     def apply_theme(self, theme: Theme) -> None:
         """面板带内联样式与投影，需要跟随主题单独刷新。"""
@@ -870,19 +922,58 @@ class SerialTab(QWidget):
         log_file_layout.addWidget(self.log_file_path_input, 1)
         log_file_layout.addWidget(self.select_log_file_button)
 
+        # 底部这些设置项平时要占三四行，收进一个可折叠容器
+        self.settings_panel = QWidget()
+        self.settings_panel.setObjectName("settingsPanel")
+        settings_layout = QVBoxLayout(self.settings_panel)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(6)
+        settings_layout.addLayout(control_top_layout)
+        settings_layout.addLayout(control_bottom_layout)
+        settings_layout.addLayout(log_file_layout)
+
+        self.toggle_command_panel_button.setMaximumWidth(110)
+        self.settings_toggle_button = QPushButton("设置 ▼")
+        self.settings_toggle_button.setCheckable(True)
+        self.settings_toggle_button.setChecked(True)
+        self.settings_toggle_button.setMaximumWidth(90)
+        self.settings_toggle_button.setToolTip("收起 / 展开下方的收发与日志设置")
+
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(8)
+        toolbar_layout.addWidget(self.toggle_command_panel_button)
+        toolbar_layout.addWidget(self.settings_toggle_button)
+        toolbar_layout.addStretch(1)
+
+        # 日志记录状态要一眼看得到，单独做成带底色的指示标签
+        self.log_status_label = QLabel()
+        self.log_status_label.setObjectName("logStatusLabel")
+
         self.stats_label = QLabel("RX: 0 bytes | TX: 0 bytes | 未连接")
         self.stats_label.setObjectName("statsLabel")
+
+        stats_layout = QHBoxLayout()
+        stats_layout.addWidget(self.stats_label)
+        stats_layout.addStretch(1)
+        stats_layout.addWidget(self.log_status_label)
 
         root_layout.addLayout(top_layout)
         root_layout.addWidget(self.receive_area, 1)
         root_layout.addLayout(search_top_layout)
         root_layout.addLayout(search_bottom_layout)
         root_layout.addLayout(send_input_layout)
-        root_layout.addWidget(self.toggle_command_panel_button, 0, Qt.AlignLeft)
-        root_layout.addLayout(control_top_layout)
-        root_layout.addLayout(control_bottom_layout)
-        root_layout.addLayout(log_file_layout)
-        root_layout.addWidget(self.stats_label)
+        root_layout.addLayout(toolbar_layout)
+        root_layout.addWidget(self.settings_panel)
+        root_layout.addLayout(stats_layout)
+
+        # 日志状态指示的累计值与节流定时器
+        self._log_lines_written = 0
+        self._log_status_timer = QTimer(self)
+        self._log_status_timer.setSingleShot(True)
+        self._log_status_timer.setInterval(500)
+        self._log_status_timer.timeout.connect(self._update_log_status)
+
+        self._update_log_status()
 
         self.loop_timer = QTimer(self)
         self.loop_timer.setTimerType(Qt.CoarseTimer)
@@ -906,6 +997,7 @@ class SerialTab(QWidget):
         self.receive_limit_combo.currentIndexChanged.connect(self._trim_receive_area_to_limit)
         self.select_log_file_button.clicked.connect(self.select_log_file)
         self.toggle_command_panel_button.toggled.connect(self._toggle_command_panel)
+        self.settings_toggle_button.toggled.connect(self._on_settings_toggled)
         self.add_command_button.clicked.connect(self.add_command_preset)
         self.import_command_button.clicked.connect(self.import_command_presets)
         self.remove_command_button.clicked.connect(self.remove_selected_command_preset)
@@ -948,21 +1040,10 @@ class SerialTab(QWidget):
         self.toggle_command_panel_button.setText("命令表 ▼" if expanded else "命令表 ▶")
 
     def _position_command_panel(self) -> None:
-        pw = min(460, max(360, int(self.width() * 0.34)))
-        ph = min(420, max(260, int(self.height() * 0.55)))
-        margin = 12
-        x = max(margin, self.width() - pw - margin)
-        y = max(70, margin + 60)
-        self.command_panel.setGeometry(x, y, pw, ph)
+        self.command_panel.apply_default_geometry()
 
     def _clamp_command_panel(self) -> None:
-        p = self.command_panel
-        if not p.isVisible():
-            return
-        x = max(0, min(p.x(), max(0, self.width() - p.width())))
-        y = max(0, min(p.y(), max(0, self.height() - p.height())))
-        if x != p.x() or y != p.y():
-            p.move(x, y)
+        self.command_panel.clamp_into_parent()
 
     def resizeEvent(self, event) -> None:
         if self.command_panel.isVisible() and not self._command_panel_placed:
@@ -1034,7 +1115,37 @@ class SerialTab(QWidget):
         finally:
             self.receive_area.setUpdatesEnabled(True)
 
+    def _on_settings_toggled(self, expanded: bool) -> None:
+        self.settings_panel.setVisible(expanded)
+        self.settings_toggle_button.setText("设置 ▼" if expanded else "设置 ▶")
+
     # -- 日志文件 ---------------------------------------------------------
+
+    def _update_log_status(self) -> None:
+        """刷新日志记录状态指示。
+
+        原来勾选后界面毫无反馈，用户没法确认到底有没有在记录，这里给一个
+        带底色的常驻指示，并把累计写入行数也带上。
+        """
+        active = self.log_to_file_checkbox.isChecked()
+        if active:
+            path = self.log_file_path_input.text().strip()
+            name = os.path.basename(path) if path else "(未选择文件)"
+            self.log_status_label.setText(f"● 记录中 → {name}（{self._log_lines_written} 行）")
+            state = "active"
+        else:
+            self.log_status_label.setText("○ 未记录到文件")
+            state = "idle"
+
+        if self.log_status_label.property("state") != state:
+            self.log_status_label.setProperty("state", state)
+            # 动态属性变化后必须重新 polish，否则 QSS 不会重算
+            self.log_status_label.style().unpolish(self.log_status_label)
+            self.log_status_label.style().polish(self.log_status_label)
+
+    def _schedule_log_status_update(self) -> None:
+        if not self._log_status_timer.isActive():
+            self._log_status_timer.start()
 
     def select_log_file(self) -> None:
         current_path = self.log_file_path_input.text().strip()
@@ -1046,14 +1157,17 @@ class SerialTab(QWidget):
             if not file_path.lower().endswith(".txt"):
                 file_path += ".txt"
             self.log_file_path_input.setText(file_path)
+            self._update_log_status()
 
     def _on_log_to_file_changed(self, checked: bool) -> None:
         if not checked:
+            self._update_log_status()
             return
 
         path = self.log_file_path_input.text().strip()
         if not path:
             QMessageBox.warning(self, "提示", "请先选择TXT文件路径")
+            # 取消勾选会再次回到本函数，状态指示随之回落
             self.log_to_file_checkbox.setChecked(False)
             return
 
@@ -1067,6 +1181,11 @@ class SerialTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "日志文件不可写", str(e))
             self.log_to_file_checkbox.setChecked(False)
+            return
+
+        self._log_lines_written = 0
+        self._update_log_status()
+        self.status_changed.emit(f"{self.tab_name} 已开始记录到 {os.path.basename(path)}")
 
     def _append_rx_to_file(self, line: str) -> None:
         if not self.log_to_file_checkbox.isChecked():
@@ -1080,6 +1199,8 @@ class SerialTab(QWidget):
             with open(file_path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
             self._txt_log_write_error_notified = False
+            self._log_lines_written += 1
+            self._schedule_log_status_update()
         except Exception as e:
             if not self._txt_log_write_error_notified:
                 QMessageBox.critical(self, "写入日志失败", str(e))
@@ -1573,6 +1694,7 @@ class SerialTab(QWidget):
     def shutdown(self) -> None:
         self._scroll_timer.stop()
         self._click_send_timer.stop()
+        self._log_status_timer.stop()
         self.loop_timer.stop()
         self.close_port()
 
