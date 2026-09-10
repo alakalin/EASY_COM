@@ -1,0 +1,482 @@
+[
+  {
+    "category": "电源关机",
+    "name": "PWRLIMIT 禁止关机(默认)",
+    "content": "PWRLIMIT,ON#"
+  },
+  {
+    "category": "电源关机",
+    "name": "PWRLIMIT 允许关机",
+    "content": "PWRLIMIT,OFF#"
+  },
+  {
+    "category": "电源关机",
+    "name": "PWRLIMIT 查询",
+    "content": "PWRLIMIT#"
+  },
+  {
+    "category": "电源关机",
+    "name": "SHUTDOWN 远程关机",
+    "content": "SHUTDOWN#"
+  },
+  {
+    "category": "电源关机",
+    "name": "FACTORY 恢复出厂设置",
+    "content": "FACTORY#"
+  },
+  {
+    "category": "电源关机",
+    "name": "RESET 重启",
+    "content": "RESET#"
+  },
+  {
+    "category": "工作模式",
+    "name": "MODE 定时定位模式",
+    "content": "MODE,1,300,0,1,1,0#"
+  },
+  {
+    "category": "工作模式",
+    "name": "MODE 运输模式",
+    "content": "MODE,4,20,10080,0,1,1,1#"
+  },
+  {
+    "category": "工作模式",
+    "name": "MODE 查询",
+    "content": "MODE#"
+  },
+  {
+    "category": "工作模式",
+    "name": "OFFLINE 进入假关机",
+    "content": "OFFLINE,ON#"
+  },
+  {
+    "category": "工作模式",
+    "name": "OFFLINE 退出假关机",
+    "content": "OFFLINE,OFF#"
+  },
+  {
+    "category": "工作模式",
+    "name": "OFFLINE 查询",
+    "content": "OFFLINE#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 仅GSM",
+    "content": "NETSET,0#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 仅4G",
+    "content": "NETSET,1#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 2G/4G自动(默认)",
+    "content": "NETSET,2#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 查询",
+    "content": "NETSET#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "APN 设置",
+    "content": "APN,CMIOT,name,12345678#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "APN 查询",
+    "content": "APN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "ASETAPN 自适应APN开启",
+    "content": "ASETAPN,ON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "ASETAPN 自适应APN关闭",
+    "content": "ASETAPN,OFF#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "ASETAPN 查询",
+    "content": "ASETAPN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "GPRSON 开启(默认)",
+    "content": "GPRSON,ON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "GPRSON 关闭",
+    "content": "GPRSON,OFF#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "GPRSON 查询",
+    "content": "GPRSON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER 设置(域名)",
+    "content": "SERVER,1,gpsdev.jimicloud.com,21102#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER 设置(IP)",
+    "content": "SERVER,0,120.77.2.16,21102#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER 查询",
+    "content": "SERVER#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,BACKUP 备用设置",
+    "content": "SERVER,BACKUP,1,gpsdev.tracksolidpro.com,21112#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,BACKUP 查询",
+    "content": "SERVER,BACKUP#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,CONN 仅连主域名(默认)",
+    "content": "SERVER,CONN,1#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,CONN 仅连备域名",
+    "content": "SERVER,CONN,2#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,CONN 查询",
+    "content": "SERVER,CONN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER2 AMS服务器设置",
+    "content": "SERVER2,1,ams.heytrack.com,12283#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER2 查询",
+    "content": "SERVER2#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "AMSCONN 连接次数限制",
+    "content": "AMSCONN,100#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "AMSCONN 查询",
+    "content": "AMSCONN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "HBT 心跳间隔(默认5分)",
+    "content": "HBT,5#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "HBT 查询",
+    "content": "HBT#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "LOCKIP 域名锁定",
+    "content": "LOCKIP,ON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "LOCKIP 域名解锁(默认)",
+    "content": "LOCKIP,OFF#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "LOCKIP 查询",
+    "content": "LOCKIP#"
+  },
+  {
+    "category": "信息查询",
+    "name": "ICCID 查询",
+    "content": "ICCID#"
+  },
+  {
+    "category": "信息查询",
+    "name": "IMSI 查询",
+    "content": "IMSI#"
+  },
+  {
+    "category": "信息查询",
+    "name": "MULTIPLEIMSI 开启",
+    "content": "MULTIPLEIMSI,ON,20,50#"
+  },
+  {
+    "category": "信息查询",
+    "name": "MULTIPLEIMSI 关闭",
+    "content": "MULTIPLEIMSI,OFF#"
+  },
+  {
+    "category": "信息查询",
+    "name": "MULTIPLEIMSI 查询",
+    "content": "MULTIPLEIMSI#"
+  },
+  {
+    "category": "信息查询",
+    "name": "CHECK 自检",
+    "content": "CHECK#"
+  },
+  {
+    "category": "信息查询",
+    "name": "VERSION 版本查询",
+    "content": "VERSION#"
+  },
+  {
+    "category": "信息查询",
+    "name": "STATUS 状态查询",
+    "content": "STATUS#"
+  },
+  {
+    "category": "信息查询",
+    "name": "BMT 电量查询",
+    "content": "BMT#"
+  },
+  {
+    "category": "报警设置",
+    "name": "REMALM 防拆报警开启",
+    "content": "REMALM,ON,0#"
+  },
+  {
+    "category": "报警设置",
+    "name": "REMALM 防拆报警关闭",
+    "content": "REMALM,OFF#"
+  },
+  {
+    "category": "报警设置",
+    "name": "REMALM 查询",
+    "content": "REMALM#"
+  },
+  {
+    "category": "报警设置",
+    "name": "BATALM 低电报警开启",
+    "content": "BATALM,ON,0#"
+  },
+  {
+    "category": "报警设置",
+    "name": "BATALM 低电报警关闭",
+    "content": "BATALM,OFF#"
+  },
+  {
+    "category": "报警设置",
+    "name": "BATALM 查询",
+    "content": "BATALM#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPTIMER 上传间隔(默认20分)",
+    "content": "TEMPTIMER,20#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPTIMER 查询",
+    "content": "TEMPTIMER#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMP 温湿度查询",
+    "content": "TEMP#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPALM 关闭报警",
+    "content": "TEMPALM,OFF,255,-18,255,80,0,0#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPALM 设置示例",
+    "content": "TEMPALM,ON,255,40,255,80,0,0#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPALM 查询",
+    "content": "TEMPALM#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BTCONNECTALM 连接告警开启",
+    "content": "BTCONNECTALM,ON,0#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BTCONNECTALM 连接告警关闭",
+    "content": "BTCONNECTALM,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BTCONNECTALM 查询",
+    "content": "BTCONNECTALM#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DEVICEALM 外设告警开启",
+    "content": "DEVICEALM,BT,ON,0#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DEVICEALM 外设告警关闭",
+    "content": "DEVICEALM,BT,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DEVICEALM 查询",
+    "content": "DEVICEALM#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT,MAC 本机MAC查询",
+    "content": "BT,MAC#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 扫描设置",
+    "content": "BT,SCANSET,30,30#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 扫描查询",
+    "content": "BT,SCANSET#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单添加",
+    "content": "BT,PAIR,B4A8283A20E1#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单清空",
+    "content": "BT,UNPAIR,ALL#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单删除",
+    "content": "BT,UNPAIR,D5:A8:32:3C:46:B6#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单查询",
+    "content": "BT,PAIR#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DOOR 外设识别开启",
+    "content": "DOOR,ON#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DOOR 外设识别关闭",
+    "content": "DOOR,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BLUETOOTH 广播开启(默认)",
+    "content": "BLUETOOTH,ON,5,2#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BLUETOOTH 广播关闭",
+    "content": "BLUETOOTH,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BLUETOOTH 查询",
+    "content": "BLUETOOTH#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 添加号码",
+    "content": "SOS,A,5656565,8988,#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 按序号删除",
+    "content": "SOS,D,1,2,3#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 按号码删除",
+    "content": "SOS,D,5656565#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 查询",
+    "content": "SOS#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOSPERMIT 权限设置",
+    "content": "SOSPERMIT,0,1#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOSPERMIT 查询",
+    "content": "SOSPERMIT#"
+  },
+  {
+    "category": "号码管理",
+    "name": "CENTER 中心号码添加",
+    "content": "CENTER,A,11223344#"
+  },
+  {
+    "category": "号码管理",
+    "name": "CENTER 中心号码删除",
+    "content": "CENTER,D,11223344#"
+  },
+  {
+    "category": "号码管理",
+    "name": "CENTER 查询",
+    "content": "CENTER#"
+  },
+  {
+    "category": "号码管理",
+    "name": "PERMIT 中心号码权限",
+    "content": "PERMIT,0#"
+  },
+  {
+    "category": "号码管理",
+    "name": "PERMIT 查询",
+    "content": "PERMIT#"
+  },
+  {
+    "category": "时区",
+    "name": "ASETGMT 时区自适应开启",
+    "content": "ASETGMT,ON#"
+  },
+  {
+    "category": "时区",
+    "name": "ASETGMT 时区自适应关闭",
+    "content": "ASETGMT,OFF#"
+  },
+  {
+    "category": "时区",
+    "name": "ASETGMT 查询",
+    "content": "ASETGMT#"
+  },
+  {
+    "category": "时区",
+    "name": "GMT 手动设置东8区",
+    "content": "GMT,E,8,0#"
+  },
+  {
+    "category": "时区",
+    "name": "GMT 查询",
+    "content": "GMT#"
+  }
+]

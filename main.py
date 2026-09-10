@@ -1,17 +1,34 @@
+"""简约串口助手 —— Python / PySide6 版
+
+功能概览
+    多标签串口调试（左右分屏，可自由增删）
+    串口参数配置、HEX 收发、定时发送、时间戳
+    接收区关键字搜索 / 高亮、接收上限裁剪、实时写 TXT
+    悬浮命令表（可拖动 / 单击发送 / 双击编辑 / 导入导出）
+    浅色 / 深色主题切换（选择会持久化到用户目录）
+
+代码结构
+    1. 常量与配置读写
+    2. 主题系统（Theme / build_palette / build_qss）
+    3. 串口读取线程 SerialReadThread
+    4. 悬浮命令面板 FloatingCommandPanel
+    5. 单串口页 SerialTab
+    6. 主窗口 MainWindow
+    7. 程序入口 main()
+"""
+
 import json
 import os
 import re
+import string
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Optional
-
-
 
 import serial
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPalette, QTextCharFormat, QTextCursor, QTextDocument
-
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -28,7 +45,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
-    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -37,10 +53,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-
-
 from serial.tools import list_ports
 
+
+# ---------------------------------------------------------------------------
+# 1. 常量与配置读写
+# ---------------------------------------------------------------------------
 
 BAUD_RATES = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 DATA_BITS = {
@@ -59,6 +77,7 @@ PARITY = {
     "Odd": serial.PARITY_ODD,
     "Even": serial.PARITY_EVEN,
 }
+ENCODINGS = ["gbk", "gb18030", "utf-8"]
 
 RECEIVE_LIMIT_OPTIONS = {
     "512KB": 512 * 1024,
@@ -67,7 +86,14 @@ RECEIVE_LIMIT_OPTIONS = {
     "40MB": 40 * 1024 * 1024,
 }
 
-COMMANDS_STORE_PATH = os.path.join(os.path.expanduser("~"), ".serial_assistant_commands.json")
+# 命令表 / 主题等偏好统一放在用户目录，避免污染程序目录（打包后目录可能只读）
+CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".serial_assistant")
+COMMANDS_STORE_PATH = os.path.join(CONFIG_DIR, "commands.json")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
+
+# 兼容上一版遗留的命令表位置，首次启动时自动迁移
+LEGACY_COMMANDS_STORE_PATH = os.path.join(os.path.expanduser("~"), ".serial_assistant_commands.json")
+
 DEFAULT_COMMAND_LINES = [
     "AT^GT_CM=PCBA,ID,CPU",
     "AT^GT_CM=PCBA,VERSION",
@@ -103,17 +129,77 @@ DEFAULT_COMMAND_LINES = [
     "AT^GT_CM=PCBA,MCU,SHUTDOWN",
 ]
 
+# 接收区一次裁剪后保留的比例（留出余量，避免每收一包都触发文档重排）
+TRIM_KEEP_RATIO = 0.8
+
 
 def resource_path(relative_path: str) -> str:
-
-
-
-    base_path = getattr(sys, "_MEIPASS", os.path.abspath("."))
+    """获取资源绝对路径，兼容 PyInstaller 打包后的临时目录。"""
+    # 打包后资源在 _MEIPASS；未打包时以本文件所在目录为基准（不能用 cwd，否则依赖启动目录）
+    base_path = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+
+def load_config() -> dict:
+    """读取用户配置，任何异常都退回空配置。"""
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_config(updates: dict) -> None:
+    """把若干键值合并写回用户配置文件。"""
+    data = load_config()
+    data.update(updates)
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        # 配置写不进去不应该影响主流程（例如用户目录只读）
+        pass
+
+
+def read_text_file(file_path: str) -> str:
+    """尽力读取文本文件，依次尝试 utf-8 / gbk / gb18030。
+
+    导入命令表时用户手上的文件常常是 GBK 编码（设备侧文档），
+    直接按 utf-8 读会抛 UnicodeDecodeError 并给出一个没头没脑的报错。
+    """
+    last_error: Optional[Exception] = None
+    for encoding in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
+        try:
+            with open(file_path, "r", encoding=encoding) as f:
+                return f.read()
+        except UnicodeDecodeError as e:
+            last_error = e
+            continue
+        except Exception:
+            raise
+    if last_error:
+        raise last_error
+    return ""
+
+
+def connect_check_state(widget: QCheckBox, handler) -> None:
+    """把复选框的勾选变化接到 `handler(checked: bool)`。
+
+    这里刻意绕开 `stateChanged`：它在 Qt 6.7 之前传 int(0/2)，
+    而 PySide6 的 `Qt.Checked` 是 CheckState 枚举，`2 == Qt.Checked` 恒为 False，
+    老写法会导致分支永远走不进去（定时发送勾了不动、路径校验永不执行）。
+    """
+    if hasattr(widget, "checkStateChanged"):
+        widget.checkStateChanged.connect(lambda state: handler(state == Qt.CheckState.Checked))
+    else:  # Qt < 6.7 兜底
+        widget.stateChanged.connect(lambda state: handler(state == Qt.CheckState.Checked.value))
 
 
 @dataclass
 class SerialConfig:
+    """串口连接参数。"""
 
     port: str
     baud_rate: int
@@ -121,6 +207,322 @@ class SerialConfig:
     stop_bits_key: str
     parity: str
 
+
+# ---------------------------------------------------------------------------
+# 2. 主题系统
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Theme:
+    """一套完整配色。字段名同时作为 QSS 模板的占位符。"""
+
+    key: str
+    label: str
+    is_dark: bool
+
+    window_bg: str          # 主窗口底色
+    panel_bg: str           # 标签页面板底色
+    textarea_bg: str        # 接收区底色
+    input_bg: str           # 输入类控件底色
+    input_bg_disabled: str
+    alt_row_bg: str         # 表格隔行底色
+    button_bg: str
+    button_hover: str
+    button_pressed: str
+    table_header_bg: str
+    tab_bg: str
+    tab_selected_bg: str
+
+    border: str
+    border_focus: str
+    text: str
+    text_dim: str
+    text_disabled: str
+
+    accent: str             # 主强调色（沿用品牌橙）
+    accent_hover: str
+    accent_pressed: str
+    accent_fg: str          # 强调色上的前景色
+    accent_soft_bg: str     # 强调色的淡化底，用于选中态按钮，避免大面积纯色块
+
+    panel_title_bg: str     # 悬浮命令面板标题栏
+    panel_title_hover_bg: str
+    panel_title_fg: str
+    panel_border: str
+
+    selection_bg: str       # 文本框选中色
+    selection_fg: str
+    highlight_bg: str       # 搜索高亮
+    highlight_fg: str
+    highlight_current_bg: str
+    highlight_current_fg: str
+
+    scrollbar_bg: str
+    scrollbar_handle: str
+    scrollbar_handle_hover: str
+
+    shadow_alpha: int       # 悬浮面板投影浓度
+
+
+LIGHT_THEME = Theme(
+    key="light",
+    label="浅色",
+    is_dark=False,
+    window_bg="#F0F1F3",
+    panel_bg="#FFFFFF",
+    textarea_bg="#FFFFFF",
+    input_bg="#FFFFFF",
+    input_bg_disabled="#EDEDED",
+    alt_row_bg="#F7F8FA",
+    button_bg="#FAFAFA",
+    button_hover="#F0F0F0",
+    button_pressed="#E2E2E2",
+    table_header_bg="#ECECEE",
+    tab_bg="#E2E4E8",
+    tab_selected_bg="#FFFFFF",
+    border="#C9CBD1",
+    border_focus="#E65100",
+    text="#1F1F1F",
+    text_dim="#6B6B6B",
+    text_disabled="#A0A0A0",
+    accent="#E65100",
+    accent_hover="#FF6D00",
+    accent_pressed="#BF360C",
+    accent_fg="#FFFFFF",
+    accent_soft_bg="#FBE3D0",
+    panel_title_bg="#BF360C",    panel_title_hover_bg="#7F1D1D",
+    panel_title_fg="#FFFFFF",
+    panel_border="#E65100",
+    selection_bg="#FFB300",
+    selection_fg="#1A1A1A",
+    highlight_bg="#FFB300",
+    highlight_fg="#1A1A1A",
+    highlight_current_bg="#FF7A00",
+    highlight_current_fg="#111111",
+    scrollbar_bg="#F0F1F3",
+    scrollbar_handle="#C0C2C8",
+    scrollbar_handle_hover="#9EA1A8",
+    shadow_alpha=70,
+)
+
+DARK_THEME = Theme(
+    key="dark",
+    label="深色",
+    is_dark=True,
+    window_bg="#1E1E20",
+    panel_bg="#26272B",
+    textarea_bg="#191A1C",
+    input_bg="#2C2D31",
+    input_bg_disabled="#232427",
+    alt_row_bg="#2A2B2F",
+    button_bg="#333438",
+    button_hover="#3E3F44",
+    button_pressed="#28292C",
+    table_header_bg="#2E2F34",
+    tab_bg="#26272B",
+    tab_selected_bg="#1E1E20",
+    border="#3F4046",
+    border_focus="#FF9800",
+    text="#DCDDE0",
+    text_dim="#9A9CA3",
+    text_disabled="#6A6C73",
+    accent="#FF9800",
+    accent_hover="#FFB74D",
+    accent_pressed="#E65100",
+    accent_fg="#1A1A1A",
+    accent_soft_bg="#3D3226",
+    panel_title_bg="#A6390B",
+    panel_title_hover_bg="#7F2A08",
+    panel_title_fg="#FFFFFF",
+    panel_border="#FF9800",
+    selection_bg="#FFB300",
+    selection_fg="#1A1A1A",
+    highlight_bg="#FFB300",
+    highlight_fg="#1A1A1A",
+    highlight_current_bg="#FF7A00",
+    highlight_current_fg="#111111",
+    scrollbar_bg="#1E1E20",
+    scrollbar_handle="#4A4C52",
+    scrollbar_handle_hover="#60636A",
+    shadow_alpha=160,
+)
+
+THEME_LIST = (LIGHT_THEME, DARK_THEME)
+THEMES = {t.key: t for t in THEME_LIST}
+DEFAULT_THEME_KEY = LIGHT_THEME.key
+
+
+_QSS_TEMPLATE = string.Template("""
+QMainWindow, QDialog, QMessageBox { background-color: $window_bg; }
+
+QLabel { background: transparent; color: $text; }
+QLabel:disabled { color: $text_disabled; }
+#appTitle { font-size: 15px; font-weight: 700; color: $accent; }
+#statusLabel, #statsLabel { color: $text_dim; }
+
+QPushButton {
+    background-color: $button_bg;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 4px;
+    padding: 4px 10px;
+}
+QPushButton:hover { background-color: $button_hover; border-color: $accent; }
+QPushButton:pressed { background-color: $button_pressed; }
+QPushButton:checked { background-color: $accent_soft_bg; border-color: $accent; color: $accent; font-weight: 700; }
+QPushButton:checked:hover { border-color: $accent_hover; color: $accent_hover; }
+QPushButton:disabled { color: $text_disabled; background-color: $input_bg_disabled; border-color: $border; }
+
+QLineEdit, QComboBox, QPlainTextEdit, QTextEdit, QTableWidget {
+    background-color: $input_bg;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 4px;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+QLineEdit, QComboBox { padding: 3px 6px; }
+QPlainTextEdit, QTextEdit { background-color: $textarea_bg; padding: 2px; }
+#receiveArea { font-family: Consolas, "Courier New", monospace; }
+QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus { border: 1px solid $border_focus; }
+QLineEdit:disabled, QComboBox:disabled, QPlainTextEdit:disabled, QTextEdit:disabled { color: $text_disabled; background-color: $input_bg_disabled; }
+QComboBox QAbstractItemView {
+    background-color: $input_bg;
+    color: $text;
+    border: 1px solid $border;
+    selection-background-color: $accent;
+    selection-color: $accent_fg;
+    outline: none;
+}
+
+QSpinBox { background-color: $input_bg; color: $text; border: 1px solid $border; border-radius: 4px; padding: 2px 4px; }
+QSpinBox:focus { border: 1px solid $border_focus; }
+
+QCheckBox { background: transparent; color: $text; spacing: 6px; }
+QCheckBox:disabled { color: $text_disabled; }
+/*
+ * Fusion 原生指示器在浅色下和窗口底色几乎同色，未勾选的框基本看不见，
+ * 所以这里显式接管。注意不能在这里放 data: URI 的 SVG 图标——Qt 的样式表
+ * 解析器会因此报错并丢掉整张表，勾选态改用实心色块表达。
+ */
+QCheckBox::indicator { width: 15px; height: 15px; border: 1px solid $border; border-radius: 3px; background-color: $input_bg; }
+QCheckBox::indicator:hover { border-color: $accent; }
+QCheckBox::indicator:checked { background-color: $accent; border-color: $accent_pressed; }
+QCheckBox::indicator:checked:hover { background-color: $accent_hover; }
+QCheckBox::indicator:disabled { background-color: $input_bg_disabled; border-color: $border; }
+
+QTabWidget::pane { border: 1px solid $border; background-color: $panel_bg; border-radius: 4px; top: -1px; }
+QTabBar::tab {
+    background-color: $tab_bg;
+    color: $text_dim;
+    border: 1px solid $border;
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 5px 16px;
+    margin-right: 2px;
+}
+QTabBar::tab:selected { background-color: $tab_selected_bg; color: $accent; font-weight: 700; }
+QTabBar::tab:hover:!selected { background-color: $button_hover; color: $text; }
+
+QHeaderView::section {
+    background-color: $table_header_bg;
+    color: $text;
+    border: none;
+    border-right: 1px solid $border;
+    border-bottom: 1px solid $border;
+    padding: 4px 6px;
+}
+QTableWidget { alternate-background-color: $alt_row_bg; gridline-color: $border; }
+QTableWidget::item { padding: 2px 4px; }
+QTableWidget::item:selected { background-color: $accent; color: $accent_fg; }
+
+QScrollBar:vertical { background: $scrollbar_bg; width: 12px; margin: 0; border: none; }
+QScrollBar::handle:vertical { background: $scrollbar_handle; min-height: 24px; border-radius: 6px; margin: 2px; }
+QScrollBar::handle:vertical:hover { background: $scrollbar_handle_hover; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; width: 0; background: none; border: none; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+QScrollBar:horizontal { background: $scrollbar_bg; height: 12px; margin: 0; border: none; }
+QScrollBar::handle:horizontal { background: $scrollbar_handle; min-width: 24px; border-radius: 6px; margin: 2px; }
+QScrollBar::handle:horizontal:hover { background: $scrollbar_handle_hover; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { height: 0; width: 0; background: none; border: none; }
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+
+QToolTip { background-color: $input_bg; color: $text; border: 1px solid $border; padding: 3px 6px; }
+""")
+
+
+def build_qss(theme: Theme) -> str:
+    """由主题生成全局样式表。"""
+    return _QSS_TEMPLATE.substitute(asdict(theme))
+
+
+def build_palette(theme: Theme) -> QPalette:
+    """由主题生成调色板。
+
+    QSS 只能覆盖它显式声明过的部件，下拉箭头、复选框指示器、表格栅格这些
+    由 style 自绘的部分仍读调色板，所以两者必须一起设置，深色下才不会出现
+    "黑底黑箭头"这类看不清的情况。
+    """
+    p = QPalette()
+    role = QPalette.ColorRole
+    group = QPalette.ColorGroup
+
+    mapping = {
+        role.Window: theme.window_bg,
+        role.WindowText: theme.text,
+        role.Base: theme.input_bg,
+        role.AlternateBase: theme.alt_row_bg,
+        role.Text: theme.text,
+        role.Button: theme.button_bg,
+        role.ButtonText: theme.text,
+        role.BrightText: "#FF5252",
+        role.Highlight: theme.accent,
+        role.HighlightedText: theme.accent_fg,
+        role.ToolTipBase: theme.input_bg,
+        role.ToolTipText: theme.text,
+        role.Link: theme.accent,
+        role.Mid: theme.border,
+        role.Dark: theme.border,
+        role.Shadow: theme.window_bg,
+    }
+    if hasattr(role, "PlaceholderText"):
+        mapping[role.PlaceholderText] = theme.text_dim
+
+    for r, color in mapping.items():
+        p.setColor(r, QColor(color))
+
+    for r in (role.WindowText, role.Text, role.ButtonText, role.HighlightedText):
+        p.setColor(group.Disabled, r, QColor(theme.text_disabled))
+
+    return p
+
+
+def apply_global_theme(app: QApplication, theme: Theme) -> None:
+    """把主题应用到整个应用。"""
+    if app.style().objectName().lower() != "fusion":
+        # Fusion 自绘比例最高，跨平台的深色表现最一致
+        app.setStyle("Fusion")
+    app.setPalette(build_palette(theme))
+    app.setStyleSheet(build_qss(theme))
+
+
+def _set_opaque_background(widget: QWidget, color: str) -> None:
+    """强制 QWidget 不透明填充背景。
+
+    普通 QWidget 叠加 QGraphicsEffect(如投影) 时不会自动填充背景，
+    会整块变透明。这里同时开启 WA_StyledBackground 并用调色板兜底。
+    """
+    widget.setAttribute(Qt.WA_StyledBackground, True)
+    widget.setAutoFillBackground(True)
+    palette = widget.palette()
+    palette.setColor(QPalette.Window, QColor(color))
+    widget.setPalette(palette)
+
+
+# ---------------------------------------------------------------------------
+# 3. 串口读取线程
+# ---------------------------------------------------------------------------
 
 class SerialReadThread(QThread):
     data_received = Signal(bytes)
@@ -137,6 +539,9 @@ class SerialReadThread(QThread):
     def run(self) -> None:
         while self._running:
             try:
+                # 串口被主线程关闭后 is_open 会变 False，这里主动退出避免刷错误
+                if not self.serial_port.is_open:
+                    break
                 waiting = self.serial_port.in_waiting
                 if waiting > 0:
                     data = self.serial_port.read(waiting)
@@ -145,22 +550,14 @@ class SerialReadThread(QThread):
                 else:
                     self.msleep(20)
             except Exception as e:
-                self.error_occurred.emit(str(e))
+                if self._running:
+                    self.error_occurred.emit(str(e))
                 break
 
 
-def _set_opaque_background(widget: QWidget, color: str) -> None:
-    """强制 QWidget 不透明填充背景。
-
-    普通 QWidget 叠加 QGraphicsEffect(如投影) 时不会自动填充背景，
-    会整块变透明。这里同时开启 WA_StyledBackground 并用调色板兜底。
-    """
-    widget.setAttribute(Qt.WA_StyledBackground, True)
-    widget.setAutoFillBackground(True)
-    palette = widget.palette()
-    palette.setColor(QPalette.Window, QColor(color))
-    widget.setPalette(palette)
-
+# ---------------------------------------------------------------------------
+# 4. 悬浮命令面板
+# ---------------------------------------------------------------------------
 
 class _CommandPanelTitleBar(QWidget):
     """悬浮命令面板的标题栏，负责拖动与关闭按钮。"""
@@ -171,7 +568,7 @@ class _CommandPanelTitleBar(QWidget):
         self._drag_offset = None
         self.setFixedHeight(30)
         self.setObjectName("commandPanelTitleBar")
-        _set_opaque_background(self, "#BF360C")
+        _set_opaque_background(self, LIGHT_THEME.panel_title_bg)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 0, 4, 0)
@@ -211,10 +608,11 @@ class _CommandPanelTitleBar(QWidget):
 class FloatingCommandPanel(QWidget):
     """不进入主布局的悬浮命令面板，叠加显示，可拖动、可关闭。"""
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: Optional[QWidget] = None, theme: Theme = LIGHT_THEME) -> None:
         super().__init__(parent)
         self.setObjectName("floatingCommandPanel")
-        _set_opaque_background(self, "#FFFFFF")
+        self._theme = theme
+        _set_opaque_background(self, theme.panel_bg)
         self.setMinimumWidth(360)
         self.setMinimumHeight(240)
         self.resize(440, 380)
@@ -225,6 +623,7 @@ class FloatingCommandPanel(QWidget):
 
         self.title_bar = _CommandPanelTitleBar(self)
         self.body = QWidget()
+        self.body.setObjectName("floatingCommandPanelBody")
         body_layout = QVBoxLayout(self.body)
         body_layout.setContentsMargins(8, 6, 8, 8)
         body_layout.setSpacing(6)
@@ -235,38 +634,56 @@ class FloatingCommandPanel(QWidget):
         self._body_layout = body_layout
         self.close_button = self.title_bar.close_button
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setColor(QColor(0, 0, 0, 70))
-        shadow.setOffset(0, 4)
-        self.setGraphicsEffect(shadow)
+        self._shadow = QGraphicsDropShadowEffect(self)
+        self._shadow.setBlurRadius(20)
+        self._shadow.setOffset(0, 4)
+        self.setGraphicsEffect(self._shadow)
 
-        self.setStyleSheet(
-            "#floatingCommandPanel {"
-            "  background: #FFFFFF; border: 2px solid #E65100; border-radius: 8px;"
-            "}"
-            "#commandPanelTitleBar {"
-            "  background: #BF360C; border-top-left-radius: 6px; border-top-right-radius: 6px;"
-            "}"
-            "#commandPanelTitleBar QLabel { border: none; background: transparent; color: #FFFFFF; font-weight: 700; }"
-            "#commandPanelCloseButton {"
-            "  border: none; background: transparent; font-weight: 700; color: #FFFFFF;"
-            "}"
-            "#commandPanelCloseButton:hover {"
-            "  background: #7F1D1D; color: #FFFFFF; border-radius: 4px;"
-            "}"
-        )
+        self.apply_theme(theme)
 
     def body_layout(self) -> QVBoxLayout:
         return self._body_layout
 
+    def apply_theme(self, theme: Theme) -> None:
+        """面板带内联样式与投影，需要跟随主题单独刷新。"""
+        self._theme = theme
+        _set_opaque_background(self, theme.panel_bg)
+        _set_opaque_background(self.title_bar, theme.panel_title_bg)
+        _set_opaque_background(self.body, theme.panel_bg)
+        self._shadow.setColor(QColor(0, 0, 0, theme.shadow_alpha))
+
+        self.setStyleSheet(
+            "#floatingCommandPanel {"
+            f"  background: {theme.panel_bg}; border: 2px solid {theme.panel_border}; border-radius: 8px;"
+            "}"
+            "#floatingCommandPanelBody {"
+            f"  background: {theme.panel_bg}; border: none;"
+            "}"
+            "#commandPanelTitleBar {"
+            f"  background: {theme.panel_title_bg};"
+            "  border-top-left-radius: 6px; border-top-right-radius: 6px;"
+            "}"
+            f"#commandPanelTitleBar QLabel {{ border: none; background: transparent; color: {theme.panel_title_fg}; font-weight: 700; }}"
+            "#commandPanelCloseButton {"
+            f"  border: none; background: transparent; font-weight: 700; color: {theme.panel_title_fg};"
+            "}"
+            "#commandPanelCloseButton:hover {"
+            f"  background: {theme.panel_title_hover_bg}; color: #FFFFFF; border-radius: 4px;"
+            "}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 5. 单串口页
+# ---------------------------------------------------------------------------
 
 class SerialTab(QWidget):
     status_changed = Signal(str)
 
-    def __init__(self, tab_name: str):
+    def __init__(self, tab_name: str, theme: Theme = LIGHT_THEME):
         super().__init__()
         self.tab_name = tab_name
+        self._theme = theme
         self.serial_port: Optional[serial.Serial] = None
         self.reader_thread: Optional[SerialReadThread] = None
         self.rx_count = 0
@@ -279,6 +696,7 @@ class SerialTab(QWidget):
         self.refresh_ports()
         self._load_command_presets()
 
+    # -- 界面搭建 ---------------------------------------------------------
 
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
@@ -304,7 +722,7 @@ class SerialTab(QWidget):
         self.parity_combo.setCurrentText("None")
 
         self.encoding_combo = QComboBox()
-        self.encoding_combo.addItems(["gbk", "gb18030", "utf-8"])
+        self.encoding_combo.addItems(ENCODINGS)
         self.encoding_combo.setCurrentText("gbk")
 
         self.refresh_button = QPushButton("刷新串口")
@@ -315,6 +733,8 @@ class SerialTab(QWidget):
         top_layout.addWidget(self.refresh_button, 0, 2)
         top_layout.addWidget(QLabel("波特率"), 0, 3)
         top_layout.addWidget(self.baud_combo, 0, 4)
+        top_layout.addWidget(QLabel("编码"), 0, 5)
+        top_layout.addWidget(self.encoding_combo, 0, 6)
 
         top_layout.addWidget(QLabel("数据位"), 1, 0)
         top_layout.addWidget(self.data_bits_combo, 1, 1)
@@ -322,18 +742,12 @@ class SerialTab(QWidget):
         top_layout.addWidget(self.stop_bits_combo, 1, 3)
         top_layout.addWidget(QLabel("校验位"), 1, 4)
         top_layout.addWidget(self.parity_combo, 1, 5)
-
-        top_layout.addWidget(QLabel("编码"), 0, 5)
-        top_layout.addWidget(self.encoding_combo, 0, 6)
         top_layout.addWidget(self.open_button, 1, 6)
 
         self.receive_area = QPlainTextEdit()
+        self.receive_area.setObjectName("receiveArea")
         self.receive_area.setReadOnly(True)
         self.receive_area.setPlaceholderText("接收数据显示区域")
-        self.receive_area.setStyleSheet(
-            "QPlainTextEdit { selection-background-color: #FFB300; selection-color: #1A1A1A; }"
-        )
-
 
         search_top_layout = QHBoxLayout()
         self.search_input = QLineEdit()
@@ -363,28 +777,31 @@ class SerialTab(QWidget):
         self.toggle_command_panel_button = QPushButton("命令表 ▶")
         self.toggle_command_panel_button.setCheckable(True)
         self.toggle_command_panel_button.setChecked(False)
+        self.toggle_command_panel_button.setMaximumWidth(110)
 
-        command_top_layout = QHBoxLayout()
+        # 面板默认只有 440px 宽，输入框和按钮挤在一行会把文字压成省略号，
+        # 拆成「输入」和「操作」两行
+        command_input_layout = QHBoxLayout()
         self.command_name_input = QLineEdit()
-        self.command_name_input.setPlaceholderText("命令名称(可选)")
+        self.command_name_input.setPlaceholderText("名称(可选)")
+        self.command_name_input.setMaximumWidth(110)
         self.command_value_input = QLineEdit()
         self.command_value_input.setPlaceholderText("命令内容")
+        command_input_layout.addWidget(self.command_name_input)
+        command_input_layout.addWidget(self.command_value_input, 1)
+
+        command_action_layout = QHBoxLayout()
         self.add_command_button = QPushButton("加入命令表")
         self.import_command_button = QPushButton("导入")
         self.remove_command_button = QPushButton("删除选中")
         self.send_command_button = QPushButton("发送选中")
-
-        command_top_layout.addWidget(QLabel("命令表"))
-        command_top_layout.addWidget(self.command_name_input)
-        command_top_layout.addWidget(self.command_value_input, 1)
-        command_top_layout.addWidget(self.add_command_button)
-        command_top_layout.addWidget(self.import_command_button)
-        command_top_layout.addWidget(self.remove_command_button)
-        command_top_layout.addWidget(self.send_command_button)
-
+        command_action_layout.addWidget(self.add_command_button)
+        command_action_layout.addWidget(self.import_command_button)
+        command_action_layout.addWidget(self.remove_command_button)
+        command_action_layout.addStretch(1)
+        command_action_layout.addWidget(self.send_command_button)
 
         self.command_table = QTableWidget(0, 2)
-
         self.command_table.setHorizontalHeaderLabels(["名称", "命令内容"])
         header = self.command_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -392,9 +809,12 @@ class SerialTab(QWidget):
         self.command_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.command_table.setSelectionMode(QTableWidget.SingleSelection)
         self.command_table.setAlternatingRowColors(True)
+        # 单击即发送、双击才编辑，必须关掉默认的单击进入编辑
+        self.command_table.setEditTriggers(QTableWidget.NoEditTriggers)
 
-        self.command_panel = FloatingCommandPanel(self)
-        self.command_panel.body_layout().addLayout(command_top_layout)
+        self.command_panel = FloatingCommandPanel(self, self._theme)
+        self.command_panel.body_layout().addLayout(command_input_layout)
+        self.command_panel.body_layout().addLayout(command_action_layout)
         self.command_panel.body_layout().addWidget(self.command_table, 1)
         self.command_panel.setVisible(False)
         self.command_panel.close_button.clicked.connect(
@@ -403,8 +823,7 @@ class SerialTab(QWidget):
         self._command_panel_placed = False
 
         control_top_layout = QHBoxLayout()
-
-
+        control_top_layout.setSpacing(14)
         self.hex_mode_checkbox = QCheckBox("HEX收发")
         self.add_newline_checkbox = QCheckBox("发送附加\\r\\n")
         self.timestamp_checkbox = QCheckBox("显示时间戳")
@@ -444,7 +863,7 @@ class SerialTab(QWidget):
         log_file_layout = QHBoxLayout()
         self.log_to_file_checkbox = QCheckBox("实时写入TXT")
         self.log_file_path_input = QLineEdit()
-        self.log_file_path_input.setPlaceholderText("选择TXT文件路径")
+        self.log_file_path_input.setPlaceholderText("选择TXT文件路径（追加写入）")
         self.select_log_file_button = QPushButton("选择文件")
 
         log_file_layout.addWidget(self.log_to_file_checkbox)
@@ -452,33 +871,33 @@ class SerialTab(QWidget):
         log_file_layout.addWidget(self.select_log_file_button)
 
         self.stats_label = QLabel("RX: 0 bytes | TX: 0 bytes | 未连接")
+        self.stats_label.setObjectName("statsLabel")
 
         root_layout.addLayout(top_layout)
         root_layout.addWidget(self.receive_area, 1)
         root_layout.addLayout(search_top_layout)
         root_layout.addLayout(search_bottom_layout)
         root_layout.addLayout(send_input_layout)
-        root_layout.addWidget(self.toggle_command_panel_button)
+        root_layout.addWidget(self.toggle_command_panel_button, 0, Qt.AlignLeft)
         root_layout.addLayout(control_top_layout)
-
-
         root_layout.addLayout(control_bottom_layout)
         root_layout.addLayout(log_file_layout)
         root_layout.addWidget(self.stats_label)
 
-
-
-
-
         self.loop_timer = QTimer(self)
+        self.loop_timer.setTimerType(Qt.CoarseTimer)
+
+        # 自动滚动节流：高频数据下每包都滚一次会把 UI 拖死
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.setInterval(16)
+        self._scroll_timer.timeout.connect(self._scroll_to_bottom)
 
         self.refresh_button.clicked.connect(self.refresh_ports)
         self.open_button.clicked.connect(self.toggle_connection)
         self.send_button.clicked.connect(self.send_data)
         self.clear_button.clicked.connect(self.clear_receive_area)
-        self.loop_send_checkbox.stateChanged.connect(self._on_loop_send_changed)
-        self.loop_timer.timeout.connect(self.send_data)
-
+        self.loop_timer.timeout.connect(self._on_loop_send_tick)
         self.search_prev_button.clicked.connect(lambda: self.find_text(forward=False))
         self.search_next_button.clicked.connect(lambda: self.find_text(forward=True))
         self.search_input.returnPressed.connect(lambda: self.find_text(forward=True))
@@ -486,12 +905,16 @@ class SerialTab(QWidget):
         self.clear_highlight_button.clicked.connect(self.clear_highlight)
         self.receive_limit_combo.currentIndexChanged.connect(self._trim_receive_area_to_limit)
         self.select_log_file_button.clicked.connect(self.select_log_file)
-        self.log_to_file_checkbox.stateChanged.connect(self._on_log_to_file_changed)
         self.toggle_command_panel_button.toggled.connect(self._toggle_command_panel)
         self.add_command_button.clicked.connect(self.add_command_preset)
         self.import_command_button.clicked.connect(self.import_command_presets)
         self.remove_command_button.clicked.connect(self.remove_selected_command_preset)
         self.send_command_button.clicked.connect(self.send_selected_command_preset)
+
+        connect_check_state(self.loop_send_checkbox, self._on_loop_send_changed)
+        connect_check_state(self.log_to_file_checkbox, self._on_log_to_file_changed)
+        # 定时发送执行中修改间隔要立刻生效，否则得先取消勾选再勾一次
+        self.loop_interval_spin.valueChanged.connect(self._on_loop_interval_changed)
 
         self._pending_send_row = None
         self._click_send_timer = QTimer(self)
@@ -502,9 +925,16 @@ class SerialTab(QWidget):
         self.command_table.cellDoubleClicked.connect(self._on_command_cell_double_clicked)
         self.command_table.cellChanged.connect(self._on_command_table_cell_changed)
 
+    def apply_theme(self, theme: Theme) -> None:
+        """切换主题时刷新本页需要单独处理的颜色。"""
+        self._theme = theme
+        self.command_panel.apply_theme(theme)
+        if self.search_input.text().strip():
+            self.highlight_all_matches(
+                current_cursor=self.receive_area.textCursor(), force_focus=False
+            )
 
-
-
+    # -- 命令面板浮动定位 --------------------------------------------------
 
     def _toggle_command_panel(self, expanded: bool) -> None:
         if expanded:
@@ -529,8 +959,8 @@ class SerialTab(QWidget):
         p = self.command_panel
         if not p.isVisible():
             return
-        x = max(0, min(p.x(), self.width() - p.width()))
-        y = max(0, min(p.y(), self.height() - p.height()))
+        x = max(0, min(p.x(), max(0, self.width() - p.width())))
+        y = max(0, min(p.y(), max(0, self.height() - p.height())))
         if x != p.x() or y != p.y():
             p.move(x, y)
 
@@ -541,13 +971,28 @@ class SerialTab(QWidget):
         self._clamp_command_panel()
         super().resizeEvent(event)
 
-    def _on_loop_send_changed(self, state: int) -> None:
+    # -- 定时发送 ---------------------------------------------------------
 
-        if state == Qt.Checked:
+    def _on_loop_send_changed(self, checked: bool) -> None:
+        if checked:
             self.loop_timer.start(self.loop_interval_spin.value())
         else:
             self.loop_timer.stop()
 
+    def _on_loop_interval_changed(self, value: int) -> None:
+        if self.loop_send_checkbox.isChecked():
+            self.loop_timer.start(value)
+
+    def _on_loop_send_tick(self) -> None:
+        """定时发送调用的是静默发送：串口没开就停下来，不要反复弹窗。"""
+        text = self.send_input.text().strip()
+        if not text:
+            return
+        if not self._send_text_payload(text, silent=True):
+            self.loop_send_checkbox.setChecked(False)
+            self.status_changed.emit(f"{self.tab_name} 定时发送已停止（串口未打开）")
+
+    # -- 接收区容量控制 ----------------------------------------------------
 
     def _current_receive_limit_bytes(self) -> int:
         selected = self.receive_limit_combo.currentData()
@@ -556,47 +1001,72 @@ class SerialTab(QWidget):
         return RECEIVE_LIMIT_OPTIONS["10MB"]
 
     def _trim_receive_area_to_limit(self) -> None:
+        """超出上限时一次性砍掉前段内容。
+
+        老实现逐块删除，10MB 上限下每次裁剪可能要执行几万次文档结构修改，
+        界面会明显卡顿。这里改成按比例定位后一次删除，并顺手把字节计数重算，
+        避免长期累加导致的偏差。
+        """
         limit_bytes = self._current_receive_limit_bytes()
         if self._displayed_text_bytes <= limit_bytes:
             return
 
         doc = self.receive_area.document()
-        while self._displayed_text_bytes > limit_bytes and doc.blockCount() > 1:
-            first_block = doc.firstBlock()
-            first_text = first_block.text()
-            removed_bytes = len((first_text + "\n").encode("utf-8", errors="replace"))
-
-            cursor = QTextCursor(doc)
-            cursor.setPosition(first_block.position())
-            cursor.select(QTextCursor.BlockUnderCursor)
-            cursor.removeSelectedText()
-            cursor.deleteChar()
-
-            self._displayed_text_bytes = max(0, self._displayed_text_bytes - removed_bytes)
-
-        if self._displayed_text_bytes > limit_bytes and doc.blockCount() <= 1:
+        if doc.blockCount() <= 1:
             self.receive_area.clear()
             self._displayed_text_bytes = 0
+            return
+
+        target_bytes = int(limit_bytes * TRIM_KEEP_RATIO)
+        keep_chars = int(doc.characterCount() * (target_bytes / max(1, self._displayed_text_bytes)))
+        keep_chars = max(1, min(keep_chars, doc.characterCount() - 1))
+
+        self.receive_area.setUpdatesEnabled(False)
+        try:
+            cursor = QTextCursor(doc)
+            cursor.setPosition(keep_chars)
+            cursor.movePosition(QTextCursor.StartOfBlock)  # 不要从半行切断
+            cursor.movePosition(QTextCursor.Start, QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            self._displayed_text_bytes = len(
+                self.receive_area.toPlainText().encode("utf-8", errors="replace")
+            )
+        finally:
+            self.receive_area.setUpdatesEnabled(True)
+
+    # -- 日志文件 ---------------------------------------------------------
 
     def select_log_file(self) -> None:
         current_path = self.log_file_path_input.text().strip()
         initial_dir = os.path.dirname(current_path) if current_path else os.path.expanduser("~")
-        file_path, _ = QFileDialog.getSaveFileName(self, "选择日志文件", initial_dir, "Text Files (*.txt)")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "选择日志文件（内容追加写入）", initial_dir, "Text Files (*.txt)"
+        )
         if file_path:
             if not file_path.lower().endswith(".txt"):
                 file_path += ".txt"
             self.log_file_path_input.setText(file_path)
 
-    def _on_log_to_file_changed(self, state: int) -> None:
-        if state != Qt.Checked:
+    def _on_log_to_file_changed(self, checked: bool) -> None:
+        if not checked:
             return
 
         path = self.log_file_path_input.text().strip()
-        if path:
+        if not path:
+            QMessageBox.warning(self, "提示", "请先选择TXT文件路径")
+            self.log_to_file_checkbox.setChecked(False)
             return
 
-        QMessageBox.warning(self, "提示", "请先选择TXT文件路径")
-        self.log_to_file_checkbox.setChecked(False)
+        # 勾选时就验证一次可写，别等到有数据了才发现路径不可用
+        try:
+            folder = os.path.dirname(path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            with open(path, "a", encoding="utf-8"):
+                pass
+        except Exception as e:
+            QMessageBox.critical(self, "日志文件不可写", str(e))
+            self.log_to_file_checkbox.setChecked(False)
 
     def _append_rx_to_file(self, line: str) -> None:
         if not self.log_to_file_checkbox.isChecked():
@@ -607,9 +1077,6 @@ class SerialTab(QWidget):
             return
 
         try:
-            folder = os.path.dirname(file_path)
-            if folder:
-                os.makedirs(folder, exist_ok=True)
             with open(file_path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
             self._txt_log_write_error_notified = False
@@ -619,16 +1086,15 @@ class SerialTab(QWidget):
                 self._txt_log_write_error_notified = True
             self.log_to_file_checkbox.setChecked(False)
 
+    # -- 命令表持久化 -----------------------------------------------------
+
     def _insert_command_row(self, name: str, content: str) -> None:
         row = self.command_table.rowCount()
         self.command_table.insertRow(row)
+        self.command_table.setItem(row, 0, QTableWidgetItem(name))
+        self.command_table.setItem(row, 1, QTableWidgetItem(content))
 
-        name_item = QTableWidgetItem(name)
-        content_item = QTableWidgetItem(content)
-        self.command_table.setItem(row, 0, name_item)
-        self.command_table.setItem(row, 1, content_item)
-
-    def _collect_command_presets(self) -> list[dict]:
+    def _collect_command_presets(self) -> list:
         commands = []
         for row in range(self.command_table.rowCount()):
             name_item = self.command_table.item(row, 0)
@@ -643,6 +1109,7 @@ class SerialTab(QWidget):
     def _save_command_presets(self) -> None:
         commands = self._collect_command_presets()
         try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
             with open(COMMANDS_STORE_PATH, "w", encoding="utf-8") as f:
                 json.dump(commands, f, ensure_ascii=False, indent=2)
             self._commands_write_error_notified = False
@@ -651,7 +1118,7 @@ class SerialTab(QWidget):
                 QMessageBox.warning(self, "命令表保存失败", str(e))
                 self._commands_write_error_notified = True
 
-    def _normalize_command_lines(self, lines: list[str]) -> list[str]:
+    def _normalize_command_lines(self, lines: list) -> list:
         normalized = []
         for raw in lines:
             line = str(raw).strip()
@@ -679,12 +1146,22 @@ class SerialTab(QWidget):
         self._save_command_presets()
 
     def _load_command_presets(self) -> None:
-        if not os.path.exists(COMMANDS_STORE_PATH):
+        store_path = COMMANDS_STORE_PATH
+
+        # 从旧版本路径迁移一次，避免用户发现命令表"丢了"
+        if not os.path.exists(store_path) and os.path.exists(LEGACY_COMMANDS_STORE_PATH):
+            try:
+                os.makedirs(CONFIG_DIR, exist_ok=True)
+                os.replace(LEGACY_COMMANDS_STORE_PATH, store_path)
+            except Exception:
+                store_path = LEGACY_COMMANDS_STORE_PATH
+
+        if not os.path.exists(store_path):
             self._load_default_command_presets()
             return
 
         try:
-            with open(COMMANDS_STORE_PATH, "r", encoding="utf-8") as f:
+            with open(store_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             self._load_default_command_presets()
@@ -709,9 +1186,7 @@ class SerialTab(QWidget):
         if self.command_table.rowCount() == 0:
             self._load_default_command_presets()
 
-
     def add_command_preset(self) -> None:
-
         content = self.command_value_input.text().strip() or self.send_input.text().strip()
         if not content:
             QMessageBox.warning(self, "提示", "请输入命令内容")
@@ -733,11 +1208,10 @@ class SerialTab(QWidget):
         if not file_path:
             return
 
-        lines: list[str] = []
+        lines: list = []
         try:
             if file_path.lower().endswith(".json"):
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                data = json.loads(read_text_file(file_path))
                 if isinstance(data, list):
                     for item in data:
                         if isinstance(item, dict):
@@ -745,8 +1219,7 @@ class SerialTab(QWidget):
                         else:
                             lines.append(str(item))
             else:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    lines = f.read().splitlines()
+                lines = read_text_file(file_path).splitlines()
         except Exception as e:
             QMessageBox.warning(self, "导入失败", str(e))
             return
@@ -773,6 +1246,7 @@ class SerialTab(QWidget):
         self.command_table.removeRow(row)
         self._save_command_presets()
 
+    # -- 命令表交互 -------------------------------------------------------
 
     def send_command_preset_by_row(self, row: int) -> None:
         if row < 0 or row >= self.command_table.rowCount():
@@ -816,16 +1290,17 @@ class SerialTab(QWidget):
         if row is not None:
             self.send_command_preset_by_row(row)
 
+    # -- 串口开关 ---------------------------------------------------------
+
     def refresh_ports(self) -> None:
-
-
         current = self.port_combo.currentText()
         self.port_combo.clear()
         ports = [p.device for p in list_ports.comports()]
         self.port_combo.addItems(ports)
         if current and current in ports:
             self.port_combo.setCurrentText(current)
-
+        if not ports:
+            self.port_combo.setPlaceholderText("未检测到串口")
 
     def get_config(self) -> SerialConfig:
         return SerialConfig(
@@ -843,10 +1318,15 @@ class SerialTab(QWidget):
 
         try:
             cfg = self.get_config()
-            if not cfg.port:
-                QMessageBox.warning(self, "提示", "请先选择可用串口")
-                return
+        except (ValueError, KeyError):
+            QMessageBox.critical(self, "参数错误", "波特率必须是数字")
+            return
 
+        if not cfg.port:
+            QMessageBox.warning(self, "提示", "请先选择可用串口")
+            return
+
+        try:
             self.serial_port = serial.Serial(
                 port=cfg.port,
                 baudrate=cfg.baud_rate,
@@ -854,6 +1334,7 @@ class SerialTab(QWidget):
                 stopbits=STOP_BITS[cfg.stop_bits_key],
                 parity=cfg.parity,
                 timeout=0.1,
+                write_timeout=1.0,  # 防止底层写阻塞把 UI 卡死
             )
 
             self.reader_thread = SerialReadThread(self.serial_port)
@@ -864,21 +1345,31 @@ class SerialTab(QWidget):
             self.open_button.setText("关闭串口")
             self.update_stats("已连接")
             self.status_changed.emit(f"{self.tab_name} 已连接 {cfg.port}")
-        except ValueError:
-            QMessageBox.critical(self, "参数错误", "波特率必须是数字")
         except Exception as e:
+            self.serial_port = None
             QMessageBox.critical(self, "打开串口失败", str(e))
 
     def close_port(self) -> None:
         if self.reader_thread:
             self.reader_thread.stop()
-            self.reader_thread.wait(500)
+            if not self.reader_thread.wait(1000):
+                # 线程没能及时退出（极端情况），先断开信号避免它再回写界面
+                try:
+                    self.reader_thread.data_received.disconnect()
+                    self.reader_thread.error_occurred.disconnect()
+                except Exception:
+                    pass
             self.reader_thread = None
 
         if self.serial_port and self.serial_port.is_open:
-            self.serial_port.close()
+            try:
+                self.serial_port.close()
+            except Exception:
+                pass
 
         self.serial_port = None
+        self.loop_timer.stop()
+        self.loop_send_checkbox.setChecked(False)
         self.open_button.setText("打开串口")
         self.update_stats("未连接")
         self.status_changed.emit(f"{self.tab_name} 已断开")
@@ -887,16 +1378,19 @@ class SerialTab(QWidget):
         self.append_log(f"[错误] {error}")
         self.close_port()
 
+    # -- 接收显示 ---------------------------------------------------------
+
     def append_log(self, text: str) -> None:
         self.receive_area.appendPlainText(text)
         self._displayed_text_bytes += len((text + "\n").encode("utf-8", errors="replace"))
         self._trim_receive_area_to_limit()
 
-        if self.auto_scroll_checkbox.isChecked():
-            scrollbar = self.receive_area.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+        if self.auto_scroll_checkbox.isChecked() and not self._scroll_timer.isActive():
+            self._scroll_timer.start()
 
-
+    def _scroll_to_bottom(self) -> None:
+        scrollbar = self.receive_area.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def _decode_bytes(self, data: bytes) -> str:
         encoding = self.encoding_combo.currentText().strip() or "gbk"
@@ -928,6 +1422,7 @@ class SerialTab(QWidget):
         self._append_rx_to_file(line)
         self.update_stats("已连接")
 
+    # -- 发送 -------------------------------------------------------------
 
     def _parse_send_payload(self, text: str) -> bytes:
         if self.hex_mode_checkbox.isChecked():
@@ -951,19 +1446,30 @@ class SerialTab(QWidget):
         except LookupError:
             return text.encode("gbk", errors="replace")
 
-    def _send_text_payload(self, text: str) -> bool:
+    def _send_text_payload(self, text: str, silent: bool = False) -> bool:
+        """发送数据。
+
+        silent=True 时不在串口未打开/参数错误时弹窗，供定时发送使用。
+        """
         if not text:
             return False
 
         if not self.serial_port or not self.serial_port.is_open:
-            QMessageBox.warning(self, "提示", "请先打开串口")
+            if not silent:
+                QMessageBox.warning(self, "提示", "请先打开串口")
             return False
 
         try:
             payload = self._parse_send_payload(text)
-            if not payload:
-                return False
+        except ValueError as e:
+            if not silent:
+                QMessageBox.warning(self, "发送参数错误", str(e))
+            return False
 
+        if not payload:
+            return False
+
+        try:
             sent = self.serial_port.write(payload)
             self.tx_count += sent
 
@@ -974,17 +1480,16 @@ class SerialTab(QWidget):
 
             self.update_stats("已连接")
             return True
-        except ValueError as e:
-            QMessageBox.warning(self, "发送参数错误", str(e))
-            return False
         except Exception as e:
-            QMessageBox.critical(self, "发送失败", str(e))
+            if not silent:
+                QMessageBox.critical(self, "发送失败", str(e))
             return False
 
     def send_data(self) -> None:
         text = self.send_input.text().strip()
         self._send_text_payload(text)
 
+    # -- 搜索 / 高亮 ------------------------------------------------------
 
     def find_text(self, forward: bool = True) -> None:
         keyword = self.search_input.text().strip()
@@ -1017,12 +1522,12 @@ class SerialTab(QWidget):
         search_cursor = QTextCursor(doc)
 
         normal_fmt = QTextCharFormat()
-        normal_fmt.setBackground(QColor("#FFB300"))
-        normal_fmt.setForeground(QColor("#1A1A1A"))
+        normal_fmt.setBackground(QColor(self._theme.highlight_bg))
+        normal_fmt.setForeground(QColor(self._theme.highlight_fg))
 
         current_fmt = QTextCharFormat()
-        current_fmt.setBackground(QColor("#FF7A00"))
-        current_fmt.setForeground(QColor("#111111"))
+        current_fmt.setBackground(QColor(self._theme.highlight_current_bg))
+        current_fmt.setForeground(QColor(self._theme.highlight_current_fg))
 
         current_start = -1
         current_end = -1
@@ -1054,8 +1559,6 @@ class SerialTab(QWidget):
             self.receive_area.setFocus(Qt.OtherFocusReason)
         self.receive_area.viewport().update()
 
-
-
     def clear_highlight(self) -> None:
         self.receive_area.setExtraSelections([])
 
@@ -1064,20 +1567,27 @@ class SerialTab(QWidget):
         self._displayed_text_bytes = 0
         self.clear_highlight()
 
-
     def update_stats(self, status_text: str) -> None:
         self.stats_label.setText(f"RX: {self.rx_count} bytes | TX: {self.tx_count} bytes | {status_text}")
 
     def shutdown(self) -> None:
+        self._scroll_timer.stop()
+        self._click_send_timer.stop()
         self.loop_timer.stop()
         self.close_port()
 
 
+# ---------------------------------------------------------------------------
+# 6. 主窗口
+# ---------------------------------------------------------------------------
+
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, theme: Theme = LIGHT_THEME):
         super().__init__()
+        self._theme = theme
         self.setWindowTitle("简约串口助手")
         self.resize(1280, 760)
+        self.setMinimumSize(900, 580)
         self.tab_count = 0
 
         central = QWidget()
@@ -1088,8 +1598,9 @@ class MainWindow(QMainWindow):
         top_bar.setSpacing(8)
 
         self.title_label = QLabel("简约串口助手")
-        self.title_label.setStyleSheet("font-weight: 600;")
+        self.title_label.setObjectName("appTitle")
         self.status_label = QLabel("就绪")
+        self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         self.add_left_button = QPushButton("新增左侧标签")
@@ -1097,6 +1608,12 @@ class MainWindow(QMainWindow):
         self.remove_left_button = QPushButton("关闭左侧当前")
         self.remove_right_button = QPushButton("关闭右侧当前")
         self.global_refresh_button = QPushButton("刷新全部串口")
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.setToolTip("切换界面配色")
+        for t in THEME_LIST:
+            self.theme_combo.addItem(t.label, t.key)
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(theme.key)))
 
         top_bar.addWidget(self.title_label)
         top_bar.addWidget(self.status_label)
@@ -1106,9 +1623,10 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.remove_left_button)
         top_bar.addWidget(self.remove_right_button)
         top_bar.addWidget(self.global_refresh_button)
+        top_bar.addWidget(QLabel("主题"))
+        top_bar.addWidget(self.theme_combo)
 
         self.left_tabs = QTabWidget()
-
         self.right_tabs = QTabWidget()
         self.left_tabs.setTabsClosable(False)
         self.right_tabs.setTabsClosable(False)
@@ -1124,14 +1642,33 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.content_widget, 1)
         self.setCentralWidget(central)
 
-
         self.add_left_button.clicked.connect(lambda: self.add_serial_tab("left"))
         self.add_right_button.clicked.connect(lambda: self.add_serial_tab("right"))
         self.remove_left_button.clicked.connect(lambda: self.remove_current_tab("left"))
         self.remove_right_button.clicked.connect(lambda: self.remove_current_tab("right"))
         self.global_refresh_button.clicked.connect(self.refresh_all_ports)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_selected)
 
         self.add_serial_tab("left")
+
+    # -- 主题 -------------------------------------------------------------
+
+    def _on_theme_selected(self, _index: int) -> None:
+        key = self.theme_combo.currentData()
+        theme = THEMES.get(key)
+        if theme is None or theme.key == self._theme.key:
+            return
+
+        self._theme = theme
+        app = QApplication.instance()
+        if app is not None:
+            apply_global_theme(app, theme)
+        for tab in self._iter_all_serial_tabs():
+            tab.apply_theme(theme)
+        save_config({"theme": key})
+        self.status_label.setText(f"已切换到{theme.label}主题")
+
+    # -- 标签页管理 -------------------------------------------------------
 
     def _next_tab_name(self) -> str:
         self.tab_count += 1
@@ -1171,7 +1708,7 @@ class MainWindow(QMainWindow):
 
     def add_serial_tab(self, side: str) -> None:
         name = self._next_tab_name()
-        tab = SerialTab(name)
+        tab = SerialTab(name, self._theme)
         tab.status_changed.connect(self.status_label.setText)
 
         if self._total_tabs() == 1:
@@ -1214,21 +1751,28 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-
+# ---------------------------------------------------------------------------
+# 7. 程序入口
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     app = QApplication(sys.argv)
+    app.setApplicationName("SerialAssistant")
+
+    theme_key = str(load_config().get("theme", DEFAULT_THEME_KEY))
+    theme = THEMES.get(theme_key, THEMES[DEFAULT_THEME_KEY])
+    apply_global_theme(app, theme)
+
     icon_path = resource_path(os.path.join("assets", "app.ico"))
     icon = QIcon(icon_path)
     if not icon.isNull():
         app.setWindowIcon(icon)
 
-    window = MainWindow()
+    window = MainWindow(theme)
     if not icon.isNull():
         window.setWindowIcon(icon)
     window.show()
     sys.exit(app.exec())
-
 
 
 if __name__ == "__main__":

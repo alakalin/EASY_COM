@@ -1,0 +1,482 @@
+[
+  {
+    "category": "电源关机",
+    "name": "PWRLIMIT 禁止关机(默认)",
+    "content": "AT^GT_CM=CMD,PWRLIMIT,ON#"
+  },
+  {
+    "category": "电源关机",
+    "name": "PWRLIMIT 允许关机",
+    "content": "AT^GT_CM=CMD,PWRLIMIT,OFF#"
+  },
+  {
+    "category": "电源关机",
+    "name": "PWRLIMIT 查询",
+    "content": "AT^GT_CM=CMD,PWRLIMIT#"
+  },
+  {
+    "category": "电源关机",
+    "name": "SHUTDOWN 远程关机",
+    "content": "AT^GT_CM=CMD,SHUTDOWN#"
+  },
+  {
+    "category": "电源关机",
+    "name": "FACTORY 恢复出厂设置",
+    "content": "AT^GT_CM=CMD,FACTORY#"
+  },
+  {
+    "category": "电源关机",
+    "name": "RESET 重启",
+    "content": "AT^GT_CM=CMD,RESET#"
+  },
+  {
+    "category": "工作模式",
+    "name": "MODE 定时定位模式",
+    "content": "AT^GT_CM=CMD,MODE,1,300,0,1,1,0#"
+  },
+  {
+    "category": "工作模式",
+    "name": "MODE 运输模式",
+    "content": "AT^GT_CM=CMD,MODE,4,20,10080,0,1,1,1#"
+  },
+  {
+    "category": "工作模式",
+    "name": "MODE 查询",
+    "content": "AT^GT_CM=CMD,MODE#"
+  },
+  {
+    "category": "工作模式",
+    "name": "OFFLINE 进入假关机",
+    "content": "AT^GT_CM=CMD,OFFLINE,ON#"
+  },
+  {
+    "category": "工作模式",
+    "name": "OFFLINE 退出假关机",
+    "content": "AT^GT_CM=CMD,OFFLINE,OFF#"
+  },
+  {
+    "category": "工作模式",
+    "name": "OFFLINE 查询",
+    "content": "AT^GT_CM=CMD,OFFLINE#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 仅GSM",
+    "content": "AT^GT_CM=CMD,NETSET,0#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 仅4G",
+    "content": "AT^GT_CM=CMD,NETSET,1#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 2G/4G自动(默认)",
+    "content": "AT^GT_CM=CMD,NETSET,2#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "NETSET 查询",
+    "content": "AT^GT_CM=CMD,NETSET#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "APN 设置",
+    "content": "AT^GT_CM=CMD,APN,CMIOT,name,12345678#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "APN 查询",
+    "content": "AT^GT_CM=CMD,APN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "ASETAPN 自适应APN开启",
+    "content": "AT^GT_CM=CMD,ASETAPN,ON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "ASETAPN 自适应APN关闭",
+    "content": "AT^GT_CM=CMD,ASETAPN,OFF#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "ASETAPN 查询",
+    "content": "AT^GT_CM=CMD,ASETAPN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "GPRSON 开启(默认)",
+    "content": "AT^GT_CM=CMD,GPRSON,ON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "GPRSON 关闭",
+    "content": "AT^GT_CM=CMD,GPRSON,OFF#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "GPRSON 查询",
+    "content": "AT^GT_CM=CMD,GPRSON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER 设置(域名)",
+    "content": "AT^GT_CM=CMD,SERVER,1,gpsdev.jimicloud.com,21102#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER 设置(IP)",
+    "content": "AT^GT_CM=CMD,SERVER,0,120.77.2.16,21102#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER 查询",
+    "content": "AT^GT_CM=CMD,SERVER#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,BACKUP 备用设置",
+    "content": "AT^GT_CM=CMD,SERVER,BACKUP,1,gpsdev.tracksolidpro.com,21112#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,BACKUP 查询",
+    "content": "AT^GT_CM=CMD,SERVER,BACKUP#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,CONN 仅连主域名(默认)",
+    "content": "AT^GT_CM=CMD,SERVER,CONN,1#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,CONN 仅连备域名",
+    "content": "AT^GT_CM=CMD,SERVER,CONN,2#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER,CONN 查询",
+    "content": "AT^GT_CM=CMD,SERVER,CONN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER2 AMS服务器设置",
+    "content": "AT^GT_CM=CMD,SERVER2,1,ams.heytrack.com,12283#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "SERVER2 查询",
+    "content": "AT^GT_CM=CMD,SERVER2#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "AMSCONN 连接次数限制",
+    "content": "AT^GT_CM=CMD,AMSCONN,100#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "AMSCONN 查询",
+    "content": "AT^GT_CM=CMD,AMSCONN#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "HBT 心跳间隔(默认5分)",
+    "content": "AT^GT_CM=CMD,HBT,5#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "HBT 查询",
+    "content": "AT^GT_CM=CMD,HBT#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "LOCKIP 域名锁定",
+    "content": "AT^GT_CM=CMD,LOCKIP,ON#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "LOCKIP 域名解锁(默认)",
+    "content": "AT^GT_CM=CMD,LOCKIP,OFF#"
+  },
+  {
+    "category": "网络服务器",
+    "name": "LOCKIP 查询",
+    "content": "AT^GT_CM=CMD,LOCKIP#"
+  },
+  {
+    "category": "信息查询",
+    "name": "ICCID 查询",
+    "content": "AT^GT_CM=CMD,ICCID#"
+  },
+  {
+    "category": "信息查询",
+    "name": "IMSI 查询",
+    "content": "AT^GT_CM=CMD,IMSI#"
+  },
+  {
+    "category": "信息查询",
+    "name": "MULTIPLEIMSI 开启",
+    "content": "AT^GT_CM=CMD,MULTIPLEIMSI,ON,20,50#"
+  },
+  {
+    "category": "信息查询",
+    "name": "MULTIPLEIMSI 关闭",
+    "content": "AT^GT_CM=CMD,MULTIPLEIMSI,OFF#"
+  },
+  {
+    "category": "信息查询",
+    "name": "MULTIPLEIMSI 查询",
+    "content": "AT^GT_CM=CMD,MULTIPLEIMSI#"
+  },
+  {
+    "category": "信息查询",
+    "name": "CHECK 自检",
+    "content": "AT^GT_CM=CMD,CHECK#"
+  },
+  {
+    "category": "信息查询",
+    "name": "VERSION 版本查询",
+    "content": "AT^GT_CM=CMD,VERSION#"
+  },
+  {
+    "category": "信息查询",
+    "name": "STATUS 状态查询",
+    "content": "AT^GT_CM=CMD,STATUS#"
+  },
+  {
+    "category": "信息查询",
+    "name": "BMT 电量查询",
+    "content": "AT^GT_CM=CMD,BMT#"
+  },
+  {
+    "category": "报警设置",
+    "name": "REMALM 防拆报警开启",
+    "content": "AT^GT_CM=CMD,REMALM,ON,0#"
+  },
+  {
+    "category": "报警设置",
+    "name": "REMALM 防拆报警关闭",
+    "content": "AT^GT_CM=CMD,REMALM,OFF#"
+  },
+  {
+    "category": "报警设置",
+    "name": "REMALM 查询",
+    "content": "AT^GT_CM=CMD,REMALM#"
+  },
+  {
+    "category": "报警设置",
+    "name": "BATALM 低电报警开启",
+    "content": "AT^GT_CM=CMD,BATALM,ON,0#"
+  },
+  {
+    "category": "报警设置",
+    "name": "BATALM 低电报警关闭",
+    "content": "AT^GT_CM=CMD,BATALM,OFF#"
+  },
+  {
+    "category": "报警设置",
+    "name": "BATALM 查询",
+    "content": "AT^GT_CM=CMD,BATALM#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPTIMER 上传间隔(默认20分)",
+    "content": "AT^GT_CM=CMD,TEMPTIMER,20#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPTIMER 查询",
+    "content": "AT^GT_CM=CMD,TEMPTIMER#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMP 温湿度查询",
+    "content": "AT^GT_CM=CMD,TEMP#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPALM 关闭报警",
+    "content": "AT^GT_CM=CMD,TEMPALM,OFF,255,-18,255,80,0,0#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPALM 设置示例",
+    "content": "AT^GT_CM=CMD,TEMPALM,ON,255,40,255,80,0,0#"
+  },
+  {
+    "category": "温湿度",
+    "name": "TEMPALM 查询",
+    "content": "AT^GT_CM=CMD,TEMPALM#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BTCONNECTALM 连接告警开启",
+    "content": "AT^GT_CM=CMD,BTCONNECTALM,ON,0#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BTCONNECTALM 连接告警关闭",
+    "content": "AT^GT_CM=CMD,BTCONNECTALM,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BTCONNECTALM 查询",
+    "content": "AT^GT_CM=CMD,BTCONNECTALM#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DEVICEALM 外设告警开启",
+    "content": "AT^GT_CM=CMD,DEVICEALM,BT,ON,0#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DEVICEALM 外设告警关闭",
+    "content": "AT^GT_CM=CMD,DEVICEALM,BT,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DEVICEALM 查询",
+    "content": "AT^GT_CM=CMD,DEVICEALM#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT,MAC 本机MAC查询",
+    "content": "AT^GT_CM=CMD,BT,MAC#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 扫描设置",
+    "content": "AT^GT_CM=CMD,BT,SCANSET,30,30#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 扫描查询",
+    "content": "AT^GT_CM=CMD,BT,SCANSET#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单添加",
+    "content": "AT^GT_CM=CMD,BT,PAIR,B4A8283A20E1#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单清空",
+    "content": "AT^GT_CM=CMD,BT,UNPAIR,ALL#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单删除",
+    "content": "AT^GT_CM=CMD,BT,UNPAIR,D5:A8:32:3C:46:B6#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BT 白名单查询",
+    "content": "AT^GT_CM=CMD,BT,PAIR#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DOOR 外设识别开启",
+    "content": "AT^GT_CM=CMD,DOOR,ON#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "DOOR 外设识别关闭",
+    "content": "AT^GT_CM=CMD,DOOR,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BLUETOOTH 广播开启(默认)",
+    "content": "AT^GT_CM=CMD,BLUETOOTH,ON,5,2#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BLUETOOTH 广播关闭",
+    "content": "AT^GT_CM=CMD,BLUETOOTH,OFF#"
+  },
+  {
+    "category": "蓝牙",
+    "name": "BLUETOOTH 查询",
+    "content": "AT^GT_CM=CMD,BLUETOOTH#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 添加号码",
+    "content": "AT^GT_CM=CMD,SOS,A,5656565,8988,#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 按序号删除",
+    "content": "AT^GT_CM=CMD,SOS,D,1,2,3#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 按号码删除",
+    "content": "AT^GT_CM=CMD,SOS,D,5656565#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOS 查询",
+    "content": "AT^GT_CM=CMD,SOS#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOSPERMIT 权限设置",
+    "content": "AT^GT_CM=CMD,SOSPERMIT,0,1#"
+  },
+  {
+    "category": "号码管理",
+    "name": "SOSPERMIT 查询",
+    "content": "AT^GT_CM=CMD,SOSPERMIT#"
+  },
+  {
+    "category": "号码管理",
+    "name": "CENTER 中心号码添加",
+    "content": "AT^GT_CM=CMD,CENTER,A,11223344#"
+  },
+  {
+    "category": "号码管理",
+    "name": "CENTER 中心号码删除",
+    "content": "AT^GT_CM=CMD,CENTER,D,11223344#"
+  },
+  {
+    "category": "号码管理",
+    "name": "CENTER 查询",
+    "content": "AT^GT_CM=CMD,CENTER#"
+  },
+  {
+    "category": "号码管理",
+    "name": "PERMIT 中心号码权限",
+    "content": "AT^GT_CM=CMD,PERMIT,0#"
+  },
+  {
+    "category": "号码管理",
+    "name": "PERMIT 查询",
+    "content": "AT^GT_CM=CMD,PERMIT#"
+  },
+  {
+    "category": "时区",
+    "name": "ASETGMT 时区自适应开启",
+    "content": "AT^GT_CM=CMD,ASETGMT,ON#"
+  },
+  {
+    "category": "时区",
+    "name": "ASETGMT 时区自适应关闭",
+    "content": "AT^GT_CM=CMD,ASETGMT,OFF#"
+  },
+  {
+    "category": "时区",
+    "name": "ASETGMT 查询",
+    "content": "AT^GT_CM=CMD,ASETGMT#"
+  },
+  {
+    "category": "时区",
+    "name": "GMT 手动设置东8区",
+    "content": "AT^GT_CM=CMD,GMT,E,8,0#"
+  },
+  {
+    "category": "时区",
+    "name": "GMT 查询",
+    "content": "AT^GT_CM=CMD,GMT#"
+  }
+]
