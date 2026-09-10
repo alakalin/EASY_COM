@@ -66,6 +66,9 @@ from serial.tools import list_ports
 # 1. 常量与配置读写
 # ---------------------------------------------------------------------------
 
+APP_NAME = "简约串口助手"
+APP_VERSION = "3.0.0"
+
 BAUD_RATES = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 DATA_BITS = {
     "5": serial.FIVEBITS,
@@ -419,7 +422,8 @@ GREEN_THEME = Theme(
 
 THEME_LIST = (LIGHT_THEME, DARK_THEME, GREEN_THEME)
 THEMES = {t.key: t for t in THEME_LIST}
-DEFAULT_THEME_KEY = LIGHT_THEME.key
+# 默认使用绿色主题；用户在标题栏的选择会覆盖它并被记住
+DEFAULT_THEME_KEY = GREEN_THEME.key
 
 
 _QSS_TEMPLATE = string.Template("""
@@ -1830,8 +1834,9 @@ class TitleBar(QWidget):
             self.icon_label.setPixmap(icon.pixmap(16, 16))
             self.icon_label.setFixedWidth(18)
 
-        self.title_label = QLabel("简约串口助手")
+        self.title_label = QLabel(APP_NAME)
         self.title_label.setObjectName("appTitle")
+        self.title_label.setToolTip(f"{APP_NAME} v{APP_VERSION}")
 
         self.status_label = QLabel("就绪")
         self.status_label.setObjectName("statusLabel")
@@ -1930,7 +1935,7 @@ class MainWindow(QMainWindow):
     def __init__(self, theme: Theme = LIGHT_THEME):
         super().__init__()
         self._theme = theme
-        self.setWindowTitle("简约串口助手")
+        self.setWindowTitle(APP_NAME)
         # 自定义标题栏：去掉系统边框，把工具栏搬进标题栏那一行
         self.setWindowFlag(Qt.FramelessWindowHint, True)
         self.resize(1280, 760)
@@ -2172,6 +2177,7 @@ class MainWindow(QMainWindow):
 def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("SerialAssistant")
+    app.setApplicationVersion(APP_VERSION)
 
     theme_key = str(load_config().get("theme", DEFAULT_THEME_KEY))
     theme = THEMES.get(theme_key, THEMES[DEFAULT_THEME_KEY])
