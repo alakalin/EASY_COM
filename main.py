@@ -251,10 +251,11 @@ class Theme:
     text_dim: str
     text_disabled: str
 
-    accent: str             # 主强调色（沿用品牌橙）
+    accent: str             # 主强调色，用于需要实心填充的场景
+    accent_text: str        # 文字/图标上的强调色，与 accent 分开取色阶
     accent_hover: str
     accent_pressed: str
-    accent_fg: str          # 强调色上的前景色
+    accent_fg: str          # 强调色实心块上的前景色
     accent_soft_bg: str     # 强调色的淡化底，用于选中态按钮，避免大面积纯色块
 
     panel_title_bg: str     # 悬浮命令面板标题栏
@@ -276,44 +277,51 @@ class Theme:
     shadow_alpha: int       # 悬浮面板投影浓度
 
 
+# 以下色值取自 Radix Colors 色阶（WorkBuddy 同源），注释标注了对应的色阶编号，
+# 便于后续微调时定位：色阶语义依次为
+#   1 应用背景 / 2 次级背景 / 3 控件背景 / 4 hover / 5 active
+#   6 分隔线与边框 / 7 边框-hover / 8 边框-焦点 / 9 实心主色 / 10 实心-hover
+#   11 低对比文字 / 12 高对比文字
 LIGHT_THEME = Theme(
     key="light",
     label="浅色",
     is_dark=False,
-    window_bg="#F0F1F3",
-    panel_bg="#FFFFFF",
-    textarea_bg="#FFFFFF",
-    input_bg="#FFFFFF",
-    input_bg_disabled="#EDEDED",
-    alt_row_bg="#F7F8FA",
-    button_bg="#FAFAFA",
-    button_hover="#F0F0F0",
-    button_pressed="#E2E2E2",
-    table_header_bg="#ECECEE",
-    tab_bg="#E2E4E8",
-    tab_selected_bg="#FFFFFF",
-    border="#C9CBD1",
-    border_focus="#E65100",
-    text="#1F1F1F",
-    text_dim="#6B6B6B",
-    text_disabled="#A0A0A0",
-    accent="#E65100",
-    accent_hover="#FF6D00",
-    accent_pressed="#BF360C",
-    accent_fg="#FFFFFF",
-    accent_soft_bg="#FBE3D0",
-    panel_title_bg="#BF360C",    panel_title_hover_bg="#7F1D1D",
-    panel_title_fg="#FFFFFF",
-    panel_border="#E65100",
-    selection_bg="#FFB300",
-    selection_fg="#1A1A1A",
-    highlight_bg="#FFB300",
-    highlight_fg="#1A1A1A",
-    highlight_current_bg="#FF7A00",
-    highlight_current_fg="#111111",
-    scrollbar_bg="#F0F1F3",
-    scrollbar_handle="#C0C2C8",
-    scrollbar_handle_hover="#9EA1A8",
+    window_bg="#f9f9f9",            # gray-2
+    panel_bg="#ffffff",
+    textarea_bg="#ffffff",
+    input_bg="#ffffff",
+    input_bg_disabled="#f0f0f0",    # gray-3
+    alt_row_bg="#f9f9f9",           # gray-2
+    button_bg="#ffffff",
+    button_hover="#f0f0f0",         # gray-3
+    button_pressed="#e8e8e8",       # gray-4
+    table_header_bg="#f0f0f0",      # gray-3
+    tab_bg="#f0f0f0",               # gray-3
+    tab_selected_bg="#ffffff",
+    border="#d9d9d9",               # gray-6
+    border_focus="#f76b15",         # orange-9
+    text="#202020",                 # gray-12
+    text_dim="#646464",             # gray-11
+    text_disabled="#8d8d8d",        # gray-9
+    accent="#f76b15",               # orange-9
+    accent_text="#cc4e00",          # orange-11
+    accent_hover="#ef5f00",         # orange-10
+    accent_pressed="#cc4e00",       # orange-11
+    accent_fg="#ffffff",
+    accent_soft_bg="#ffefd6",       # orange-3
+    panel_title_bg="#cc4e00",       # orange-11
+    panel_title_hover_bg="#582d1d",  # orange-12
+    panel_title_fg="#ffffff",
+    panel_border="#f76b15",         # orange-9
+    selection_bg="#ffdfb5",         # orange-4
+    selection_fg="#582d1d",         # orange-12
+    highlight_bg="#ffdfb5",         # orange-4
+    highlight_fg="#582d1d",         # orange-12
+    highlight_current_bg="#f76b15",  # orange-9
+    highlight_current_fg="#ffffff",
+    scrollbar_bg="#f9f9f9",         # gray-2
+    scrollbar_handle="#bbbbbb",     # gray-8
+    scrollbar_handle_hover="#8d8d8d",  # gray-9
     shadow_alpha=70,
 )
 
@@ -321,45 +329,91 @@ DARK_THEME = Theme(
     key="dark",
     label="深色",
     is_dark=True,
-    window_bg="#1E1E20",
-    panel_bg="#26272B",
-    textarea_bg="#191A1C",
-    input_bg="#2C2D31",
-    input_bg_disabled="#232427",
-    alt_row_bg="#2A2B2F",
-    button_bg="#333438",
-    button_hover="#3E3F44",
-    button_pressed="#28292C",
-    table_header_bg="#2E2F34",
-    tab_bg="#26272B",
-    tab_selected_bg="#1E1E20",
-    border="#3F4046",
-    border_focus="#FF9800",
-    text="#DCDDE0",
-    text_dim="#9A9CA3",
-    text_disabled="#6A6C73",
-    accent="#FF9800",
-    accent_hover="#FFB74D",
-    accent_pressed="#E65100",
-    accent_fg="#1A1A1A",
-    accent_soft_bg="#3D3226",
-    panel_title_bg="#A6390B",
-    panel_title_hover_bg="#7F2A08",
-    panel_title_fg="#FFFFFF",
-    panel_border="#FF9800",
-    selection_bg="#FFB300",
-    selection_fg="#1A1A1A",
-    highlight_bg="#FFB300",
-    highlight_fg="#1A1A1A",
-    highlight_current_bg="#FF7A00",
-    highlight_current_fg="#111111",
-    scrollbar_bg="#1E1E20",
-    scrollbar_handle="#4A4C52",
-    scrollbar_handle_hover="#60636A",
-    shadow_alpha=160,
+    window_bg="#111111",            # gray-1 (dark)
+    panel_bg="#191919",             # gray-2
+    textarea_bg="#111111",          # gray-1，接收区做成最暗的"画布"
+    input_bg="#222222",             # gray-3
+    input_bg_disabled="#191919",    # gray-2
+    alt_row_bg="#191919",           # gray-2
+    button_bg="#222222",            # gray-3
+    button_hover="#2a2a2a",         # gray-4
+    button_pressed="#313131",       # gray-5
+    table_header_bg="#222222",      # gray-3
+    tab_bg="#191919",               # gray-2
+    tab_selected_bg="#111111",      # gray-1
+    border="#3a3a3a",               # gray-6
+    border_focus="#f76b15",         # orange-9
+    text="#eeeeee",                 # gray-12
+    text_dim="#b4b4b4",             # gray-11
+    text_disabled="#6e6e6e",        # gray-9
+    accent="#f76b15",               # orange-9
+    accent_text="#ffa057",          # orange-11 (dark)，深底上做文字要更亮
+    accent_hover="#ff801f",         # orange-10 (dark)
+    accent_pressed="#ef5f00",       # orange-10
+    accent_fg="#1a1a1a",
+    accent_soft_bg="#331e0b",       # orange-3 (dark)
+    panel_title_bg="#a35829",       # orange-8 (dark)
+    panel_title_hover_bg="#7e451d",  # orange-7 (dark)
+    panel_title_fg="#ffffff",
+    panel_border="#f76b15",         # orange-9
+    selection_bg="#562800",         # orange-5 (dark)
+    selection_fg="#ffe0c2",         # orange-12 (dark)
+    highlight_bg="#66350c",         # orange-6 (dark)
+    highlight_fg="#ffe0c2",         # orange-12 (dark)
+    highlight_current_bg="#f76b15",  # orange-9
+    highlight_current_fg="#1a1a1a",
+    scrollbar_bg="#111111",         # gray-1
+    scrollbar_handle="#484848",     # gray-7
+    scrollbar_handle_hover="#606060",  # gray-8
+    shadow_alpha=170,
 )
 
-THEME_LIST = (LIGHT_THEME, DARK_THEME)
+# 中性色用 Radix olive（带极轻微绿调的灰），主色用 Radix green，
+# 整体就是 WorkBuddy 当前的配色观感
+GREEN_THEME = Theme(
+    key="green",
+    label="绿色",
+    is_dark=False,
+    window_bg="#f8faf8",            # olive-2
+    panel_bg="#ffffff",
+    textarea_bg="#ffffff",
+    input_bg="#ffffff",
+    input_bg_disabled="#eff1ef",    # olive-3
+    alt_row_bg="#f8faf8",           # olive-2
+    button_bg="#ffffff",
+    button_hover="#eff1ef",         # olive-3
+    button_pressed="#e7e9e7",       # olive-4
+    table_header_bg="#eff1ef",      # olive-3
+    tab_bg="#eff1ef",               # olive-3
+    tab_selected_bg="#ffffff",
+    border="#d7dad7",               # olive-6
+    border_focus="#30a46c",         # green-9
+    text="#1d211c",                 # olive-12
+    text_dim="#60655f",             # olive-11
+    text_disabled="#898e87",        # olive-9
+    accent="#30a46c",               # green-9
+    accent_text="#218358",          # green-11
+    accent_hover="#2b9a66",         # green-10
+    accent_pressed="#218358",       # green-11
+    accent_fg="#ffffff",
+    accent_soft_bg="#e6f6eb",       # green-3
+    panel_title_bg="#218358",       # green-11
+    panel_title_hover_bg="#193b2d",  # green-12
+    panel_title_fg="#ffffff",
+    panel_border="#30a46c",         # green-9
+    selection_bg="#d6f1df",         # green-4
+    selection_fg="#193b2d",         # green-12
+    highlight_bg="#d6f1df",         # green-4
+    highlight_fg="#193b2d",         # green-12
+    highlight_current_bg="#30a46c",  # green-9
+    highlight_current_fg="#ffffff",
+    scrollbar_bg="#f8faf8",         # olive-2
+    scrollbar_handle="#b9bcb8",     # olive-8
+    scrollbar_handle_hover="#898e87",  # olive-9
+    shadow_alpha=70,
+)
+
+THEME_LIST = (LIGHT_THEME, DARK_THEME, GREEN_THEME)
 THEMES = {t.key: t for t in THEME_LIST}
 DEFAULT_THEME_KEY = LIGHT_THEME.key
 
@@ -375,11 +429,11 @@ QMainWindow { border: 1px solid $border; }
  */
 #titleBar { background-color: $panel_bg; border-bottom: 1px solid $border; }
 #titleBar QLabel { color: $text_dim; }
-#titleBar #appTitle { font-size: 15px; font-weight: 700; color: $accent; }
+#titleBar #appTitle { font-size: 15px; font-weight: 700; color: $accent_text; }
 
 QLabel { background: transparent; color: $text; }
 QLabel:disabled { color: $text_disabled; }
-#appTitle { font-size: 15px; font-weight: 700; color: $accent; }
+#appTitle { font-size: 15px; font-weight: 700; color: $accent_text; }
 #statusLabel, #statsLabel { color: $text_dim; }
 
 QPushButton#windowButton, QPushButton#windowCloseButton {
@@ -399,7 +453,7 @@ QPushButton#windowCloseButton:pressed { background-color: #B10F1B; color: #FFFFF
  * 属性选择器依赖 QSS 的 [state="..."]，改属性后需要 unpolish/polish 才会重算。
  */
 #logStatusLabel { color: $text_disabled; padding: 1px 8px; border-radius: 3px; }
-#logStatusLabel[state="active"] { color: $accent; background-color: $accent_soft_bg; font-weight: 700; }
+#logStatusLabel[state="active"] { color: $accent_text; background-color: $accent_soft_bg; font-weight: 700; }
 
 QPushButton {
     background-color: $button_bg;
@@ -410,8 +464,8 @@ QPushButton {
 }
 QPushButton:hover { background-color: $button_hover; border-color: $accent; }
 QPushButton:pressed { background-color: $button_pressed; }
-QPushButton:checked { background-color: $accent_soft_bg; border-color: $accent; color: $accent; font-weight: 700; }
-QPushButton:checked:hover { border-color: $accent_hover; color: $accent_hover; }
+QPushButton:checked { background-color: $accent_soft_bg; border-color: $accent; color: $accent_text; font-weight: 700; }
+QPushButton:checked:hover { border-color: $accent_hover; color: $accent_text; }
 QPushButton:disabled { color: $text_disabled; background-color: $input_bg_disabled; border-color: $border; }
 
 QLineEdit, QComboBox, QPlainTextEdit, QTextEdit, QTableWidget {
@@ -463,7 +517,7 @@ QTabBar::tab {
     padding: 5px 16px;
     margin-right: 2px;
 }
-QTabBar::tab:selected { background-color: $tab_selected_bg; color: $accent; font-weight: 700; }
+QTabBar::tab:selected { background-color: $tab_selected_bg; color: $accent_text; font-weight: 700; }
 QTabBar::tab:hover:!selected { background-color: $button_hover; color: $text; }
 
 QHeaderView::section {
@@ -1066,24 +1120,30 @@ class SerialTab(QWidget):
     def _toggle_command_panel(self, expanded: bool) -> None:
         if expanded:
             if not self._command_panel_placed:
-                self._position_command_panel()
-                self._command_panel_placed = True
+                self._command_panel_placed = self._position_command_panel()
             self.command_panel.setVisible(True)
             self.command_panel.raise_()
         else:
             self.command_panel.setVisible(False)
         self.toggle_command_panel_button.setText("命令表 ▼" if expanded else "命令表 ▶")
 
-    def _position_command_panel(self) -> None:
+    def _position_command_panel(self) -> bool:
+        """按当前尺寸摆放命令面板。
+
+        窗口首次显示前尺寸还是初始值，这时候算出来的位置会偏；返回 False
+        让调用方别记为"已摆放"，等 resizeEvent 里尺寸就绪后再补一次。
+        """
+        if self.width() < 320 or self.height() < 320:
+            return False
         self.command_panel.apply_default_geometry()
+        return True
 
     def _clamp_command_panel(self) -> None:
         self.command_panel.clamp_into_parent()
 
     def resizeEvent(self, event) -> None:
         if self.command_panel.isVisible() and not self._command_panel_placed:
-            self._position_command_panel()
-            self._command_panel_placed = True
+            self._command_panel_placed = self._position_command_panel()
         self._clamp_command_panel()
         super().resizeEvent(event)
 
