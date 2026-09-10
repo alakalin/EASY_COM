@@ -42,11 +42,9 @@ htmlcov/
 Thumbs.db
 Desktop.ini
 
-# WPF / .NET build artifacts
-wpf/**/bin/
-wpf/**/obj/
-wpf/**/publish/
-wpf/**/publish_fd/
+# Electron / Node build artifacts
+electron/
+node_modules/
 
 # WorkBuddy local project memory
 .workbuddy/
