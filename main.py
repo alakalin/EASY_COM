@@ -95,6 +95,26 @@ RECEIVE_LIMIT_OPTIONS = {
     "40MB": 40 * 1024 * 1024,
 }
 
+# 接收合并：把一小段时间内连续到达的数据拼成一条输出。
+# 串口是按字节流渐进到达的，一条长报文（比如 300 字节 @115200 要约 26ms）
+# 会被读线程切成好几批，逐批显示就会出现"报文中间插进一个时间戳"的怪象。
+# 这里用空闲超时判断边界：只要还在持续来数据就继续攒，安静超过阈值才输出。
+RX_MERGE_OPTIONS = {
+    "关闭": 0,
+    "30ms": 30,
+    "50ms": 50,
+    "100ms": 100,
+    "200ms": 200,
+}
+DEFAULT_RX_MERGE_LABEL = "50ms"
+# 缓冲上限：遇到永不空闲的连续流时，攒到这里就强制输出，免得延迟无限拉长
+RX_MERGE_MAX_BYTES = 4096
+
+# 命令表列索引
+COMMAND_NAME_COLUMN = 0
+COMMAND_CONTENT_COLUMN = 1
+COMMAND_EDIT_COLUMN = 2
+
 # 命令表 / 主题等偏好统一放在用户目录，避免污染程序目录（打包后目录可能只读）
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".serial_assistant")
 COMMANDS_STORE_PATH = os.path.join(CONFIG_DIR, "commands.json")
@@ -540,6 +560,17 @@ QTableWidget { alternate-background-color: $alt_row_bg; gridline-color: $border;
 QTableWidget::item { padding: 2px 4px; }
 QTableWidget::item:selected { background-color: $accent; color: $accent_fg; }
 
+/* 命令表行尾的编辑小图标 */
+QPushButton#tableEditButton {
+    background: transparent;
+    border: none;
+    color: $text_dim;
+    font-size: 14px;
+    padding: 0px;
+    border-radius: 3px;
+}
+QPushButton#tableEditButton:hover { background-color: $accent_soft_bg; color: $accent_text; }
+
 QScrollBar:vertical { background: $scrollbar_bg; width: 12px; margin: 0; border: none; }
 QScrollBar::handle:vertical { background: $scrollbar_handle; min-height: 24px; border-radius: 6px; margin: 2px; }
 QScrollBar::handle:vertical:hover { background: $scrollbar_handle_hover; }
@@ -679,6 +710,7 @@ class _CommandPanelTitleBar(QWidget):
 
         self.title_label = QLabel("命令表")
         self.title_label.setStyleSheet("font-weight:600;")
+        self.setToolTip("按住可拖动面板位置，双击复位到默认位置")
 
         self.close_button = QPushButton("✕")
         self.close_button.setObjectName("commandPanelCloseButton")
@@ -724,13 +756,16 @@ class _CommandPanelTitleBar(QWidget):
 class FloatingCommandPanel(QWidget):
     """不进入主布局的悬浮命令面板，叠加显示，可拖动、可关闭。"""
 
+    MIN_WIDTH = 360
+    MIN_HEIGHT = 240
+
     def __init__(self, parent: Optional[QWidget] = None, theme: Theme = LIGHT_THEME) -> None:
         super().__init__(parent)
         self.setObjectName("floatingCommandPanel")
         self._theme = theme
         _set_opaque_background(self, theme.panel_bg)
-        self.setMinimumWidth(360)
-        self.setMinimumHeight(240)
+        self.setMinimumWidth(self.MIN_WIDTH)
+        self.setMinimumHeight(self.MIN_HEIGHT)
         self.resize(440, 380)
 
         outer = QVBoxLayout(self)
@@ -780,18 +815,35 @@ class FloatingCommandPanel(QWidget):
         parent = self.parentWidget()
         if parent is None:
             return
-        pw = min(460, max(360, int(parent.width() * 0.34)))
-        ph = min(420, max(260, int(parent.height() * 0.55)))
+        avail_w = max(240, parent.width() - 16)
+        avail_h = max(180, parent.height() - 16)
+        pw = min(460, max(self.MIN_WIDTH, int(parent.width() * 0.34)), avail_w)
+        ph = min(420, max(self.MIN_HEIGHT, int(parent.height() * 0.55)), avail_h)
         margin = 12
         x = max(margin, parent.width() - pw - margin)
-        y = 70
+        y = min(70, max(0, parent.height() - ph))
         self.setGeometry(x, y, pw, ph)
         self.move(self.clamp_position(QPoint(x, y)))
 
     def clamp_into_parent(self) -> None:
-        """尺寸或父控件变化后重新夹回可见区域。"""
-        if self.isVisible():
-            self.move(self.clamp_position(self.pos()))
+        """父控件尺寸变化后，把面板收进可见区域。
+
+        如果父控件已经比面板的最小尺寸还小，必须先收缩面板本身：否则
+        clamp_position 会把位置死锁在 (0, 0)，用户怎么拖都会被弹回去，
+        表现出来就是"面板卡住、拖不动也关不掉"。典型触发场景是单标签时把
+        面板拖到最右侧，然后新增一个右侧标签、可用宽度直接减半。
+        """
+        parent = self.parentWidget()
+        if parent is None or not self.isVisible():
+            return
+
+        avail_w = max(240, parent.width() - 8)
+        avail_h = max(180, parent.height() - 8)
+        self.setMinimumWidth(min(self.MIN_WIDTH, avail_w))
+        self.setMinimumHeight(min(self.MIN_HEIGHT, avail_h))
+        if self.width() > avail_w or self.height() > avail_h:
+            self.resize(min(self.width(), avail_w), min(self.height(), avail_h))
+        self.move(self.clamp_position(self.pos()))
 
     def apply_theme(self, theme: Theme) -> None:
         """面板带内联样式与投影，需要跟随主题单独刷新。"""
@@ -950,15 +1002,17 @@ class SerialTab(QWidget):
         command_action_layout.addStretch(1)
         command_action_layout.addWidget(self.send_command_button)
 
-        self.command_table = QTableWidget(0, 2)
-        self.command_table.setHorizontalHeaderLabels(["名称", "命令内容"])
+        self.command_table = QTableWidget(0, COMMAND_EDIT_COLUMN + 1)
+        self.command_table.setHorizontalHeaderLabels(["名称", "命令内容", ""])
         header = self.command_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(COMMAND_NAME_COLUMN, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(COMMAND_CONTENT_COLUMN, QHeaderView.Stretch)
+        header.setSectionResizeMode(COMMAND_EDIT_COLUMN, QHeaderView.Fixed)
+        self.command_table.setColumnWidth(COMMAND_EDIT_COLUMN, 32)
         self.command_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.command_table.setSelectionMode(QTableWidget.SingleSelection)
         self.command_table.setAlternatingRowColors(True)
-        # 单击即发送、双击才编辑，必须关掉默认的单击进入编辑
+        # 双击发送、点最右侧图标才进入编辑，所以不保留任何自动编辑触发器
         self.command_table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         self.command_panel = FloatingCommandPanel(self, self._theme)
@@ -998,10 +1052,22 @@ class SerialTab(QWidget):
             self.receive_limit_combo.addItem(label, size)
         self.receive_limit_combo.setCurrentText("10MB")
 
+        self.rx_merge_combo = QComboBox()
+        for label, merge_ms in RX_MERGE_OPTIONS.items():
+            self.rx_merge_combo.addItem(label, merge_ms)
+        self.rx_merge_combo.setCurrentText(DEFAULT_RX_MERGE_LABEL)
+        self.rx_merge_combo.setToolTip(
+            "间隔小于该值的数据会并成一条显示\n"
+            "长报文就不会在中间插进时间戳、RX 前缀了"
+        )
+
         self.clear_button = QPushButton("清空接收区")
 
         control_bottom_layout.addWidget(self.loop_send_checkbox)
         control_bottom_layout.addWidget(self.loop_interval_spin)
+        control_bottom_layout.addSpacing(8)
+        control_bottom_layout.addWidget(QLabel("合并"))
+        control_bottom_layout.addWidget(self.rx_merge_combo)
         control_bottom_layout.addSpacing(8)
         control_bottom_layout.addWidget(QLabel("接收上限"))
         control_bottom_layout.addWidget(self.receive_limit_combo)
@@ -1081,6 +1147,14 @@ class SerialTab(QWidget):
         self._scroll_timer.setInterval(16)
         self._scroll_timer.timeout.connect(self._scroll_to_bottom)
 
+        # 接收合并缓冲：攒到出现空闲再作为一条输出
+        self._rx_chunks: list = []
+        self._rx_pending_bytes = 0
+        self._rx_first_time: Optional[datetime] = None
+        self._rx_merge_timer = QTimer(self)
+        self._rx_merge_timer.setSingleShot(True)
+        self._rx_merge_timer.timeout.connect(self._flush_rx_buffer)
+
         self.refresh_button.clicked.connect(self.refresh_ports)
         self.open_button.clicked.connect(self.toggle_connection)
         self.send_button.clicked.connect(self.send_data)
@@ -1105,12 +1179,6 @@ class SerialTab(QWidget):
         # 定时发送执行中修改间隔要立刻生效，否则得先取消勾选再勾一次
         self.loop_interval_spin.valueChanged.connect(self._on_loop_interval_changed)
 
-        self._pending_send_row = None
-        self._click_send_timer = QTimer(self)
-        self._click_send_timer.setSingleShot(True)
-        self._click_send_timer.timeout.connect(self._fire_pending_send)
-
-        self.command_table.cellClicked.connect(self._on_command_cell_clicked)
         self.command_table.cellDoubleClicked.connect(self._on_command_cell_double_clicked)
         self.command_table.cellChanged.connect(self._on_command_table_cell_changed)
 
@@ -1315,8 +1383,17 @@ class SerialTab(QWidget):
     def _insert_command_row(self, name: str, content: str) -> None:
         row = self.command_table.rowCount()
         self.command_table.insertRow(row)
-        self.command_table.setItem(row, 0, QTableWidgetItem(name))
-        self.command_table.setItem(row, 1, QTableWidgetItem(content))
+        self.command_table.setItem(row, COMMAND_NAME_COLUMN, QTableWidgetItem(name))
+        self.command_table.setItem(row, COMMAND_CONTENT_COLUMN, QTableWidgetItem(content))
+
+        edit_button = QPushButton("✎")
+        edit_button.setObjectName("tableEditButton")
+        edit_button.setToolTip("修改这条命令（双击整行是发送）")
+        edit_button.setCursor(Qt.PointingHandCursor)
+        edit_button.clicked.connect(
+            lambda _checked=False, b=edit_button: self._begin_edit_command_row_by_button(b)
+        )
+        self.command_table.setCellWidget(row, COMMAND_EDIT_COLUMN, edit_button)
 
     def _collect_command_presets(self) -> list:
         commands = []
@@ -1493,26 +1570,34 @@ class SerialTab(QWidget):
     def _on_command_table_cell_changed(self, _row: int, _column: int) -> None:
         self._save_command_presets()
 
-    def _on_command_cell_clicked(self, row: int, _col: int) -> None:
+    def _on_command_cell_double_clicked(self, row: int, col: int) -> None:
+        """双击整行 = 发送；最右侧的编辑图标由按钮自己处理。"""
+        if col == COMMAND_EDIT_COLUMN:
+            return
+        self.send_command_preset_by_row(row)
+
+    # -- 行内编辑（由行尾的小图标触发）------------------------------------
+
+    def _row_of_edit_button(self, button: QWidget) -> int:
+        for row in range(self.command_table.rowCount()):
+            if self.command_table.cellWidget(row, COMMAND_EDIT_COLUMN) is button:
+                return row
+        return -1
+
+    def _begin_edit_command_row_by_button(self, button: QWidget) -> None:
+        row = self._row_of_edit_button(button)
+        if row >= 0:
+            self._begin_edit_command_row(row)
+
+    def _begin_edit_command_row(self, row: int) -> None:
+        """让该行的名称单元格进入编辑，按 Tab 可以接着改命令内容。"""
         if row < 0 or row >= self.command_table.rowCount():
             return
-        self._pending_send_row = row
-        interval = QApplication.doubleClickInterval()
-        self._click_send_timer.start(interval if interval > 0 else 250)
-
-    def _on_command_cell_double_clicked(self, row: int, _col: int) -> None:
-        # 双击时取消单击触发的发送，并进入单元格编辑（双击修改）
-        self._click_send_timer.stop()
-        self._pending_send_row = None
-        item = self.command_table.item(row, self.command_table.currentColumn())
-        if item is not None:
-            self.command_table.editItem(item)
-
-    def _fire_pending_send(self) -> None:
-        row = self._pending_send_row
-        self._pending_send_row = None
-        if row is not None:
-            self.send_command_preset_by_row(row)
+        item = self.command_table.item(row, COMMAND_NAME_COLUMN)
+        if item is None:
+            return
+        self.command_table.setCurrentCell(row, COMMAND_NAME_COLUMN)
+        self.command_table.editItem(item)
 
     # -- 串口开关 ---------------------------------------------------------
 
@@ -1632,12 +1717,51 @@ class SerialTab(QWidget):
             return self._bytes_to_hex(data)
         return self._decode_bytes(data)
 
+    def _current_rx_merge_ms(self) -> int:
+        value = self.rx_merge_combo.currentData()
+        return value if isinstance(value, int) else 0
+
     def on_data_received(self, data: bytes) -> None:
         self.rx_count += len(data)
+
+        merge_ms = self._current_rx_merge_ms()
+        if merge_ms <= 0:
+            # 关闭合并：读到多少就显示多少
+            self._emit_rx_line(data, datetime.now())
+            return
+
+        if not self._rx_chunks:
+            self._rx_first_time = datetime.now()
+        self._rx_chunks.append(data)
+        self._rx_pending_bytes += len(data)
+
+        if self._rx_pending_bytes >= RX_MERGE_MAX_BYTES:
+            # 持续不断的流不会出现空闲，攒到上限就强制输出
+            self._flush_rx_buffer()
+            return
+
+        # 每来一批就重置计时：只要数据还在陆续到达就继续攒
+        self._rx_merge_timer.start(merge_ms)
+
+    def _flush_rx_buffer(self) -> None:
+        if not self._rx_chunks:
+            return
+
+        self._rx_merge_timer.stop()
+        data = b"".join(self._rx_chunks)
+        first_time = self._rx_first_time or datetime.now()
+        self._rx_chunks.clear()
+        self._rx_pending_bytes = 0
+        self._rx_first_time = None
+
+        self._emit_rx_line(data, first_time)
+
+    def _emit_rx_line(self, data: bytes, when: datetime) -> None:
+        """输出一条接收记录，时间戳取这批数据首个字节的到达时刻。"""
         body = self._format_rx_text(data)
 
         if self.timestamp_checkbox.isChecked():
-            ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            ts = when.strftime("%H:%M:%S.%f")[:-3]
             line = f"[{ts}] RX: {body}"
         else:
             line = body
@@ -1789,6 +1913,11 @@ class SerialTab(QWidget):
     def clear_receive_area(self) -> None:
         self.receive_area.clear()
         self._displayed_text_bytes = 0
+        # 清空时把还没吐出来的合并缓冲一并丢掉，否则会立刻冒出来一行
+        self._rx_merge_timer.stop()
+        self._rx_chunks.clear()
+        self._rx_pending_bytes = 0
+        self._rx_first_time = None
         self.clear_highlight()
 
     def update_stats(self, status_text: str) -> None:
@@ -1796,8 +1925,8 @@ class SerialTab(QWidget):
 
     def shutdown(self) -> None:
         self._scroll_timer.stop()
-        self._click_send_timer.stop()
         self._log_status_timer.stop()
+        self._rx_merge_timer.stop()
         self.loop_timer.stop()
         self.close_port()
 
