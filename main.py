@@ -1091,8 +1091,6 @@ class SerialTab(QWidget):
             "长报文就不会在中间插进时间戳、RX 前缀了"
         )
 
-        self.clear_button = QPushButton("清空接收区")
-
         control_bottom_layout.addWidget(self.loop_send_checkbox)
         control_bottom_layout.addWidget(self.loop_interval_spin)
         control_bottom_layout.addSpacing(8)
@@ -1101,8 +1099,6 @@ class SerialTab(QWidget):
         control_bottom_layout.addSpacing(8)
         control_bottom_layout.addWidget(QLabel("接收上限"))
         control_bottom_layout.addWidget(self.receive_limit_combo)
-        control_bottom_layout.addSpacing(8)
-        control_bottom_layout.addWidget(self.clear_button)
         control_bottom_layout.addStretch(1)
 
         log_file_layout = QHBoxLayout()
@@ -1132,10 +1128,14 @@ class SerialTab(QWidget):
         self.settings_toggle_button.setMaximumWidth(90)
         self.settings_toggle_button.setToolTip("收起 / 展开下方的收发与日志设置")
 
+        # 清空接收区放在「设置」右边：设置收起时也能直接点，不用先展开
+        self.clear_button = QPushButton("清空接收区")
+
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setSpacing(8)
         toolbar_layout.addWidget(self.toggle_command_panel_button)
         toolbar_layout.addWidget(self.settings_toggle_button)
+        toolbar_layout.addWidget(self.clear_button)
         toolbar_layout.addStretch(1)
 
         # 日志记录状态要一眼看得到，单独做成带底色的指示标签
