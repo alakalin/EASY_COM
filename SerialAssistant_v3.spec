@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""简约串口助手 v3.0.0 —— 单文件打包配置。
+"""简约串口助手 v3.x —— 单文件打包配置。
 
 - 打包 assets 目录：运行时通过 resource_path() 从 sys._MEIPASS 读取 app.ico
 - console=False：双击启动不弹控制台窗口

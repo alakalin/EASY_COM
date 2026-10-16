@@ -1,4 +1,4 @@
-# 简约串口助手 v3.0.0
+# 简约串口助手 v3.0.1
 
 一个面向 Windows 的串口调试工具，用 `PySide6` + `pyserial` 写成**单个 `main.py`**：
 多标签、左右分屏、HEX 收发、时间戳、关键字检索与高亮、悬浮命令表，
@@ -99,7 +99,7 @@
 - `requirements.txt`：Python 依赖
 - `assets/app.ico`：程序图标
 - `screenshots/`：主题与界面效果截图（用脚本重新生成，见下）
-- `SerialAssistant_v3.spec`：v3.0.0 单文件打包配置（其余 `SerialAssistant*.spec` 为历史版本配置）
+- `SerialAssistant_v3.spec`：v3 系列的单文件打包配置（其余 `SerialAssistant*.spec` 为历史版本配置）
 - `build_gps_commands.py`、`gps_tracker_commands*`：GPS 指令集与生成脚本
 - `.gitignore`：Git 忽略规则
 
