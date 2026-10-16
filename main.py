@@ -878,6 +878,34 @@ class FloatingCommandPanel(QWidget):
 # 5. 单串口页
 # ---------------------------------------------------------------------------
 
+def format_port_label(info) -> str:
+    """把端口信息拼成设备管理器里的那种名字，如 `USB-SERIAL CH340 (COM14)`。
+
+    Windows 下 `description` 就是设备管理器显示的友好名，但各驱动写法不一：
+    多数已经自带 `(COM14)` 后缀，少数只有驱动名，个别虚拟串口两者相同，
+    还有拿不到名字时 pyserial 给的 `n/a`。这里把这几种都规整成同一种写法。
+    """
+    device = str(getattr(info, "device", "") or "").strip()
+    description = str(getattr(info, "description", "") or "").strip()
+    if not device:
+        return description or "未知端口"
+    if not description or description.lower() in ("n/a", "none") or description.lower() == device.lower():
+        return device
+    # 友好名里已经带了 "(COM14)" 就不再补一次，免得出现 "... (COM14) (COM14)"
+    if re.search(r"\(\s*" + re.escape(device) + r"\s*\)\s*$", description, re.IGNORECASE):
+        return description
+    return f"{description} ({device})"
+
+
+def build_port_tooltip(info) -> str:
+    """端口下拉框放不下长名字时的悬浮提示，顺带带上硬件 ID。"""
+    lines = [format_port_label(info)]
+    hwid = str(getattr(info, "hwid", "") or "").strip()
+    if hwid and hwid.lower() not in ("n/a", "none"):
+        lines.append(f"硬件 ID：{hwid}")
+    return "\n".join(lines)
+
+
 class SerialTab(QWidget):
     status_changed = Signal(str)
 
@@ -904,6 +932,8 @@ class SerialTab(QWidget):
         top_layout = QGridLayout()
 
         self.port_combo = QComboBox()
+        # 下拉框被挤窄时，靠悬浮提示看完整端口名（提示内容见 refresh_ports）
+        self.port_combo.currentIndexChanged.connect(self._sync_port_tooltip)
 
         self.baud_combo = QComboBox()
         self.baud_combo.setEditable(True)
@@ -1602,18 +1632,47 @@ class SerialTab(QWidget):
     # -- 串口开关 ---------------------------------------------------------
 
     def refresh_ports(self) -> None:
-        current = self.port_combo.currentText()
+        # 显示文本已经变成"友好名 (COM14)"，所以选中项要按 itemData 里的真实
+        # 端口名恢复，不能再拿 currentText 去比对（那样永远匹配不上）。
+        current = self.port_combo.currentData()
         self.port_combo.clear()
-        ports = [p.device for p in list_ports.comports()]
-        self.port_combo.addItems(ports)
-        if current and current in ports:
-            self.port_combo.setCurrentText(current)
-        if not ports:
+        for info in list_ports.comports():
+            device = str(getattr(info, "device", "") or "").strip()
+            if not device:
+                continue
+            self.port_combo.addItem(format_port_label(info), device)
+            self.port_combo.setItemData(
+                self.port_combo.count() - 1, build_port_tooltip(info), Qt.ToolTipRole
+            )
+        if self.port_combo.count() == 0:
             self.port_combo.setPlaceholderText("未检测到串口")
+            self.port_combo.setToolTip("")
+            return
+        self.port_combo.setPlaceholderText("")
+        # 设过占位文案之后，Qt 往空下拉框里 addItem 不会再自动选中第一项，
+        # 这里显式选中：优先恢复原来的端口，否则选第一个。
+        index = self.port_combo.findData(current) if current else -1
+        self.port_combo.setCurrentIndex(index if index >= 0 else 0)
+        # 索引没变时不会触发 currentIndexChanged，这里补一次保证提示是最新的
+        self._sync_port_tooltip()
+
+    def _sync_port_tooltip(self) -> None:
+        """把当前项的悬浮提示同步到下拉框本身：分屏挤窄时靠它看完整名字。"""
+        self.port_combo.setToolTip(str(self.port_combo.currentData(Qt.ToolTipRole) or ""))
+
+    def selected_port(self) -> str:
+        """下拉框里真正的端口名（COM14）——显示文本是友好名，不能拿去开串口。"""
+        data = self.port_combo.currentData()
+        if data:
+            return str(data).strip()
+        # 兜底：万一被外部塞进纯文本，就从 "友好名 (COM14)" 里抠出端口名
+        text = self.port_combo.currentText().strip()
+        match = re.search(r"\(([^()]+)\)\s*$", text)
+        return (match.group(1) if match else text).strip()
 
     def get_config(self) -> SerialConfig:
         return SerialConfig(
-            port=self.port_combo.currentText().strip(),
+            port=self.selected_port(),
             baud_rate=int(self.baud_combo.currentText().strip()),
             data_bits=DATA_BITS[self.data_bits_combo.currentText()],
             stop_bits_key=self.stop_bits_combo.currentText(),
