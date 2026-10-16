@@ -1228,6 +1228,11 @@ class SerialTab(QWidget):
             if not self._command_panel_placed:
                 self._command_panel_placed = self._position_command_panel()
             self.command_panel.setVisible(True)
+            # 收起期间标签页可能已经变窄（典型场景：单标签时把面板拖到最右、收起，
+            # 再新增右侧标签，可用宽度直接减半）。隐藏状态下 clamp_into_parent 不
+            # 做收纳，位置会停在旧坐标上；展开时若不重收一次，面板就落在所属标签页
+            # 之外被裁掉，表现成"点了命令表却没反应"。
+            self.command_panel.clamp_into_parent()
             self.command_panel.raise_()
         else:
             self.command_panel.setVisible(False)
