@@ -2130,6 +2130,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 580)
         self.tab_count = 0
         self._maximized = False
+        self._screen_checked = False
         self._normal_geometry: Optional[QRect] = None
 
         central = QWidget()
@@ -2172,8 +2173,46 @@ class MainWindow(QMainWindow):
         self.theme_combo.currentIndexChanged.connect(self._on_theme_selected)
 
         self.add_serial_tab("left")
+        # 启动位置也要收一次：多屏且缩放不同时，系统可能把窗口摆到屏幕外
+        self.fit_into_screen()
 
     # -- 窗口控制（无边框窗口需要自己实现）--------------------------------
+
+    def fit_into_screen(self, center: bool = True) -> None:
+        """把窗口收进当前屏幕的可用区域，保证标题栏一定在屏幕内。
+
+        默认尺寸是按逻辑像素给的（1280x760），在 150% 缩放的屏幕上会渲染成
+        1920x1140 —— 比那块屏的可用区还大；多屏且缩放不同时，系统还可能把窗口
+        摆成标题栏在屏幕上方、右半边出界。而无边框窗口只能靠标题栏拖动，标题栏
+        够不到就彻底动不了它。
+
+        center=True（启动时）：按可用区居中摆放。
+        center=False（显示后复核）：已经在屏幕内就原样不动，免得每次启动都跳一下。
+        """
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        geo = self.geometry()
+        width = min(max(geo.width(), self.minimumWidth()), area.width())
+        height = min(max(geo.height(), self.minimumHeight()), area.height())
+        if not center and geo.width() == width and geo.height() == height and area.contains(geo):
+            return
+        if center:
+            x = area.x() + max(0, (area.width() - width) // 2)
+            y = area.y() + max(0, (area.height() - height) // 2)
+        else:
+            x = min(max(geo.x(), area.x()), max(area.x(), area.right() - width + 1))
+            y = min(max(geo.y(), area.y()), max(area.y(), area.bottom() - height + 1))
+        self.setGeometry(x, y, width, height)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._screen_checked:
+            self._screen_checked = True
+            # 到这一刻 Qt 才知道窗口真正落在哪块屏上（多屏缩放不同时这点很关键），
+            # 所以再用实际屏幕复核一次；没出界就什么都不做
+            self.fit_into_screen(center=False)
 
     def is_custom_maximized(self) -> bool:
         return self._maximized
