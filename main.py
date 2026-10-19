@@ -67,7 +67,7 @@ from serial.tools import list_ports
 # ---------------------------------------------------------------------------
 
 APP_NAME = "简约串口助手"
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.0.2"
 
 BAUD_RATES = ["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
 DATA_BITS = {
@@ -908,6 +908,9 @@ def build_port_tooltip(info) -> str:
 
 class SerialTab(QWidget):
     status_changed = Signal(str)
+    # 命令表保存成功后广播（参数是发起保存的标签页本身），让其它标签从同一个文件
+    # 重新载入——每个标签各持一份表，不广播的话后保存的会把先保存的整表覆盖掉
+    command_store_saved = Signal(object)
 
     def __init__(self, tab_name: str, theme: Theme = LIGHT_THEME):
         super().__init__()
@@ -1353,17 +1356,38 @@ class SerialTab(QWidget):
         if not self._log_status_timer.isActive():
             self._log_status_timer.start()
 
+    def _validate_log_path(self, path: str) -> bool:
+        """确认日志路径可写（顺带把目录建出来），失败时提示一次。"""
+        try:
+            folder = os.path.dirname(path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            with open(path, "a", encoding="utf-8"):
+                pass
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "日志文件不可写", str(e))
+            return False
+
     def select_log_file(self) -> None:
         current_path = self.log_file_path_input.text().strip()
         initial_dir = os.path.dirname(current_path) if current_path else os.path.expanduser("~")
         file_path, _ = QFileDialog.getSaveFileName(
             self, "选择日志文件（内容追加写入）", initial_dir, "Text Files (*.txt)"
         )
-        if file_path:
-            if not file_path.lower().endswith(".txt"):
-                file_path += ".txt"
-            self.log_file_path_input.setText(file_path)
-            self._update_log_status()
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".txt"):
+            file_path += ".txt"
+        self.log_file_path_input.setText(file_path)
+        if self.log_to_file_checkbox.isChecked():
+            # 记录中换文件：新路径也要验证可写，行数从 0 重新计，
+            # 否则状态栏会把两个文件的合计当成新文件的
+            if not self._validate_log_path(file_path):
+                self.log_to_file_checkbox.setChecked(False)
+                return
+            self._log_lines_written = 0
+        self._update_log_status()
 
     def _on_log_to_file_changed(self, checked: bool) -> None:
         if not checked:
@@ -1378,14 +1402,7 @@ class SerialTab(QWidget):
             return
 
         # 勾选时就验证一次可写，别等到有数据了才发现路径不可用
-        try:
-            folder = os.path.dirname(path)
-            if folder:
-                os.makedirs(folder, exist_ok=True)
-            with open(path, "a", encoding="utf-8"):
-                pass
-        except Exception as e:
-            QMessageBox.critical(self, "日志文件不可写", str(e))
+        if not self._validate_log_path(path):
             self.log_to_file_checkbox.setChecked(False)
             return
 
@@ -1449,10 +1466,44 @@ class SerialTab(QWidget):
             with open(COMMANDS_STORE_PATH, "w", encoding="utf-8") as f:
                 json.dump(commands, f, ensure_ascii=False, indent=2)
             self._commands_write_error_notified = False
+            self.command_store_saved.emit(self)
         except Exception as e:
             if not self._commands_write_error_notified:
                 QMessageBox.warning(self, "命令表保存失败", str(e))
                 self._commands_write_error_notified = True
+
+    def reload_command_presets(self) -> None:
+        """从磁盘重新载入命令表，供其它标签保存后同步用。
+
+        内容一致就直接返回：命令表在每次单元格变动后都会保存，若每次都重建行，
+        另一个正开着面板的标签会白刷一遍、还可能打断正在编辑的单元格。
+        """
+        try:
+            with open(COMMANDS_STORE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+        if not isinstance(data, list):
+            return
+
+        incoming = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            incoming.append({"name": str(item.get("name", "")).strip(), "content": content})
+        if incoming == self._collect_command_presets():
+            return
+
+        self.command_table.blockSignals(True)
+        try:
+            self.command_table.setRowCount(0)
+            for idx, item in enumerate(incoming):
+                self._insert_command_row(item["name"] or f"命令{idx + 1}", item["content"])
+        finally:
+            self.command_table.blockSignals(False)
 
     def _normalize_command_lines(self, lines: list) -> list:
         normalized = []
@@ -1544,34 +1595,51 @@ class SerialTab(QWidget):
         if not file_path:
             return
 
-        lines: list = []
+        # 统一整理成 (名称, 内容)。JSON 里带 name/category 就沿用——旧实现只取 content，
+        # 把仓库自带那种带名字的指令集导进来会全变成"导入1、导入2"，信息白丢
+        entries: list = []
         try:
+            text = read_text_file(file_path)
             if file_path.lower().endswith(".json"):
-                data = json.loads(read_text_file(file_path))
-                if isinstance(data, list):
-                    for item in data:
-                        if isinstance(item, dict):
-                            lines.append(str(item.get("content", "")))
+                data = json.loads(text)
+                if not isinstance(data, list):
+                    raise ValueError("JSON 顶层需要是数组")
+                for item in data:
+                    if isinstance(item, dict):
+                        content = str(item.get("content", "")).strip()
+                        if not content:
+                            continue
+                        name = str(item.get("name", "")).strip()
+                        category = str(item.get("category", "")).strip()
+                        if category and name:
+                            label = f"{category} / {name}"
                         else:
-                            lines.append(str(item))
+                            label = name or category
+                        entries.append((label, content))
+                    else:
+                        content = str(item).strip()
+                        if content:
+                            entries.append(("", content))
             else:
-                lines = read_text_file(file_path).splitlines()
+                for cmd in self._normalize_command_lines(text.splitlines()):
+                    entries.append(("", cmd))
         except Exception as e:
             QMessageBox.warning(self, "导入失败", str(e))
             return
 
-        normalized = self._normalize_command_lines(lines)
-        if not normalized:
+        if not entries:
             QMessageBox.information(self, "提示", "未解析到有效命令")
             return
 
         self.command_table.blockSignals(True)
-        self.command_table.setRowCount(0)
-        for idx, cmd in enumerate(normalized, start=1):
-            self._insert_command_row(f"导入{idx}", cmd)
-        self.command_table.blockSignals(False)
+        try:
+            self.command_table.setRowCount(0)
+            for idx, (label, content) in enumerate(entries, start=1):
+                self._insert_command_row(label or f"导入{idx}", content)
+        finally:
+            self.command_table.blockSignals(False)
         self._save_command_presets()
-        QMessageBox.information(self, "导入完成", f"已导入 {len(normalized)} 条命令")
+        QMessageBox.information(self, "导入完成", f"已导入 {len(entries)} 条命令")
 
     def remove_selected_command_preset(self) -> None:
         row = self.command_table.currentRow()
@@ -1640,15 +1708,26 @@ class SerialTab(QWidget):
         # 显示文本已经变成"友好名 (COM14)"，所以选中项要按 itemData 里的真实
         # 端口名恢复，不能再拿 currentText 去比对（那样永远匹配不上）。
         current = self.port_combo.currentData()
-        self.port_combo.clear()
+        # 正在连接的端口即使这次枚举不到，也要保留在列表里：否则界面会显示
+        # "未检测到串口"、选中项为空，而底下其实还连着，用户会以为已经断开了
+        connected = ""
+        if self.serial_port and self.serial_port.is_open:
+            connected = str(getattr(self.serial_port, "port", "") or "").strip()
+
+        devices = []
         for info in list_ports.comports():
             device = str(getattr(info, "device", "") or "").strip()
             if not device:
                 continue
-            self.port_combo.addItem(format_port_label(info), device)
-            self.port_combo.setItemData(
-                self.port_combo.count() - 1, build_port_tooltip(info), Qt.ToolTipRole
-            )
+            devices.append((device, format_port_label(info), build_port_tooltip(info)))
+        if connected and not any(dev == connected for dev, _, _ in devices):
+            devices.append((connected, connected, f"{connected}（连接中，本次未枚举到）"))
+
+        self.port_combo.clear()
+        for device, label, tip in devices:
+            self.port_combo.addItem(label, device)
+            self.port_combo.setItemData(self.port_combo.count() - 1, tip, Qt.ToolTipRole)
+
         if self.port_combo.count() == 0:
             self.port_combo.setPlaceholderText("未检测到串口")
             self.port_combo.setToolTip("")
@@ -1733,6 +1812,9 @@ class SerialTab(QWidget):
                 except Exception:
                     pass
             self.reader_thread = None
+
+        # 把还没吐出来的合并数据先显示掉，别因为关串口丢掉最后一批
+        self._flush_rx_buffer()
 
         if self.serial_port and self.serial_port.is_open:
             try:
@@ -1832,7 +1914,10 @@ class SerialTab(QWidget):
 
         self.append_log(line)
         self._append_rx_to_file(line)
-        self.update_stats("已连接")
+        # 状态按底层连接的真实情况写：合并缓冲可能在关串口之后才吐出来，
+        # 无条件写"已连接"会把刚关掉的状态又翻回去
+        connected = bool(self.serial_port and self.serial_port.is_open)
+        self.update_stats("已连接" if connected else "未连接")
 
     # -- 发送 -------------------------------------------------------------
 
@@ -2361,6 +2446,7 @@ class MainWindow(QMainWindow):
         name = self._next_tab_name()
         tab = SerialTab(name, self._theme)
         tab.status_changed.connect(self.status_label.setText)
+        tab.command_store_saved.connect(self._on_command_store_saved)
 
         if self._total_tabs() == 1:
             target_tabs = self.right_tabs if self.left_tabs.count() == 1 else self.left_tabs
@@ -2390,6 +2476,16 @@ class MainWindow(QMainWindow):
                 widget = tabs.widget(i)
                 if isinstance(widget, SerialTab):
                     yield widget
+
+    def _on_command_store_saved(self, source) -> None:
+        """某个标签保存了命令表：让其它标签从同一个文件重新载入。
+
+        命令表文件是全局一份、而每个标签各持一份表格控件；不广播的话，
+        后保存的那个标签会用自己的旧表把先保存的整表覆盖掉。
+        """
+        for tab in self._iter_all_serial_tabs():
+            if tab is not source:
+                tab.reload_command_presets()
 
     def refresh_all_ports(self) -> None:
         for tab in self._iter_all_serial_tabs():
